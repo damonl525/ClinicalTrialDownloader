@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Document downloads — documents module for CtrdataBridge.
+
+Handles: download_documents_for_ids() with resume/checkpoint logic,
+download_one_trial_doc() (in process module), resume file management.
+"""
+
+import os
+import json
+import logging
+from typing import Any, Callable, Dict, List
+
+from core.exceptions import DatabaseError, CtrdataError
+from ctrdata import process as _proc
+from ctrdata.process import download_one_trial_doc  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Resume/checkpoint helpers
+# ============================================================
+
+def _get_resume_file(bridge, documents_path: str) -> str:
+    """Get the checkpoint file path for a documents directory."""
+    db_basename = os.path.splitext(os.path.basename(bridge.db_path))[0]
+    db_dir = os.path.dirname(bridge.db_path) or "."
+    return os.path.join(db_dir, f"{db_basename}_doc_resume.json")
+
+
+def _session_hash(trial_ids) -> str:
+    """Compute a session hash from sorted trial IDs for resume isolation."""
+    import hashlib
+
+    sorted_ids = sorted(str(tid) for tid in trial_ids)
+    return hashlib.md5(",".join(sorted_ids).encode()).hexdigest()[:16]
+
+
+def _load_resume(bridge, resume_file: str) -> dict:
+    """Load checkpoint data from file."""
+    if not os.path.exists(resume_file):
+        return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+    try:
+        with open(resume_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return {
+            "completed": list(data.get("completed", [])),
+            "failed": dict(data.get("failed", {})),
+            "skipped_explicitly": list(data.get("skipped_explicitly", [])),
+            "total": data.get("total", 0),
+            "session": data.get("session", None),
+        }
+    except Exception:
+        return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+
+
+def _save_resume(
+    bridge,
+    resume_file: str,
+    completed: list,
+    failed: dict,
+    total: int,
+    skipped_explicitly: list = None,
+    session: str = None,
+):
+    """Atomically write checkpoint file."""
+    data = {
+        "completed": completed,
+        "failed": failed,
+        "total": total,
+        "skipped_explicitly": skipped_explicitly or [],
+        "session": session or "",
+    }
+    tmp_file = resume_file + ".tmp"
+    with open(tmp_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp_file, resume_file)
+
+
+def _cleanup_resume(bridge, resume_file: str):
+    """Delete checkpoint file."""
+    try:
+        if os.path.exists(resume_file):
+            os.unlink(resume_file)
+    except Exception:
+        pass
+
+
+# ============================================================
+# Batch document download with resume
+# ============================================================
+
+def download_documents_for_ids(
+    bridge,
+    trial_ids: List[str],
+    documents_path: str,
+    documents_regexp: str = None,
+    timeout_total: int = 7200,
+    per_trial_timeout: int = 180,
+    callback: Callable = None,
+) -> Dict[str, Any]:
+    """
+    为指定的 trial ID 列表下载文档。
+
+    Through a Python-side loop calling ctrLoadQueryIntoDb(queryterm=trial_id)
+    per trial. Supports global timeout, per-trial timeout skip, resume,
+    and progress callbacks.
+    """
+    if not bridge.db_path:
+        raise DatabaseError("请先连接数据库")
+    if not trial_ids:
+        return {"ok": True, "success": [], "failed": {}, "skipped": {}, "total": 0}
+
+    os.makedirs(documents_path, exist_ok=True)
+
+    resume_file = _get_resume_file(bridge, documents_path)
+    resume_data = _load_resume(bridge, resume_file)
+
+    current_session = _session_hash(trial_ids)
+    if resume_data.get("session") and resume_data["session"] != current_session:
+        _cleanup_resume(bridge, resume_file)
+        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+
+    already_done = set(resume_data.get("completed", []))
+    skipped_explicit = set(resume_data.get("skipped_explicitly", []))
+    remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
+
+    if not remaining:
+        requested_set = set(str(tid) for tid in trial_ids)
+        return {
+            "ok": True,
+            "success": [tid for tid in already_done if tid in requested_set],
+            "failed": {},
+            "skipped": {},
+            "total": len(trial_ids),
+        }
+
+    total_to_process = len(remaining)
+    runtime_completed = list(already_done)
+    runtime_failed = dict(resume_data.get("failed", {}))
+    runtime_skipped_explicit = list(resume_data.get("skipped_explicitly", []))
+
+    def _save_runtime_resume():
+        _save_resume(
+            bridge,
+            resume_file,
+            runtime_completed,
+            runtime_failed,
+            len(trial_ids),
+            skipped_explicitly=runtime_skipped_explicit,
+            session=current_session,
+        )
+
+    for i, tid in enumerate(remaining, 1):
+        if callback:
+            callback(i, total_to_process, tid, "start", None)
+
+        try:
+            result = download_one_trial_doc(
+                bridge, tid, documents_path, documents_regexp, per_trial_timeout
+            )
+            if result.get("ok"):
+                runtime_completed.append(tid)
+                if callback:
+                    callback(i, total_to_process, tid, "ok", None)
+            else:
+                err = result.get("error", "unknown")
+                runtime_failed[tid] = err
+                if callback:
+                    callback(i, total_to_process, tid, "error", err)
+
+        except CtrdataError as e:
+            err_msg = f"TIMEOUT({per_trial_timeout}s): {e}"
+            runtime_failed[tid] = err_msg
+            if callback:
+                callback(i, total_to_process, tid, "skip", err_msg)
+
+        _save_runtime_resume()
+
+    skipped = {}
+    failed = {}
+    for tid, err in runtime_failed.items():
+        if "TIMEOUT" in str(err):
+            skipped[tid] = err
+        else:
+            failed[tid] = err
+
+    if not failed and not skipped:
+        _cleanup_resume(bridge, resume_file)
+
+    return {
+        "ok": True,
+        "success": list(runtime_completed),
+        "failed": failed,
+        "skipped": skipped,
+        "total": len(trial_ids),
+    }
+
+
+# ============================================================
+# Resume control
+# ============================================================
+
+def clear_resume(bridge, documents_path: str = None):
+    """Clear the resume file to start a fresh download session."""
+    resume_file = _get_resume_file(bridge, documents_path or "")
+    _cleanup_resume(bridge, resume_file)
+
+
+def mark_trial_skipped(bridge, trial_id: str, documents_path: str):
+    """Mark a trial as explicitly skipped in the resume file."""
+    resume_file = _get_resume_file(bridge, documents_path)
+    resume_data = _load_resume(bridge, resume_file)
+    skipped = list(resume_data.get("skipped_explicitly", []))
+    if trial_id not in skipped:
+        skipped.append(trial_id)
+    _save_resume(
+        bridge,
+        resume_file,
+        resume_data.get("completed", []),
+        resume_data.get("failed", {}),
+        resume_data.get("total", 0),
+        skipped_explicitly=skipped,
+        session=resume_data.get("session"),
+    )

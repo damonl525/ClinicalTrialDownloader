@@ -1,0 +1,27 @@
+con <- nodbi::src_sqlite(
+    dbname="{{ db }}",
+    collection="{{ col }}"
+)
+result <- tryCatch({
+    suppressWarnings(suppressMessages({
+        ctrdata::ctrLoadQueryIntoDb(
+            querytoupdate = {{ update_val }},
+            con = con, verbose = FALSE
+        )
+    }}))
+}, error = function(e) {
+    cat(sprintf("ERROR\t%s\n", as.character(e$message)))
+    list(n = 0L, success = character(0), failed = character(0))
+})
+DBI::dbDisconnect(con$con)
+
+n_val <- ifelse("n" %in% names(result), result$n, 0L)
+success_ids <- if ("success" %in% names(result)) as.character(result$success) else character(0)
+failed_ids <- if ("failed" %in% names(result)) as.character(names(result$failed)) else character(0)
+
+cat(jsonlite::toJSON(list(
+    ok = TRUE,
+    n = n_val,
+    success = I(success_ids),
+    failed = failed_ids
+), auto_unbox = TRUE))
