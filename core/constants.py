@@ -151,7 +151,7 @@ GUI_TITLE = f"{APP_NAME} v{APP_VERSION}"
 GUI_DEFAULT_SIZE = (950, 720)
 GUI_MIN_SIZE = (800, 600)
 LOG_MAX_LINES = 2000
-TREEVIEW_DISPLAY_LIMIT = 500
+TREEVIEW_DISPLAY_LIMIT = 50
 
 # ================================================================
 # 默认选中的概念函数

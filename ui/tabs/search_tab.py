@@ -458,9 +458,6 @@ class SearchTab(QWidget):
                 return
 
             params = self._collect_form_params()
-            if not params["condition"] and not params["intervention"] and not params["search_phrase"]:
-                QMessageBox.warning(self, "提示", "请先输入搜索条件")
-                return
 
             urls = self.app.bridge.generate_queries(**params)
             selected_regs = self._get_selected_registers()
@@ -482,9 +479,6 @@ class SearchTab(QWidget):
         if mode == "form":
             if not self._generated_urls:
                 params = self._collect_form_params()
-                if not params["condition"] and not params["intervention"] and not params["search_phrase"]:
-                    QMessageBox.warning(self, "提示", "请先输入搜索条件")
-                    return
                 try:
                     urls = self.app.bridge.generate_queries(**params)
                     self._generated_urls = self._filter_urls_by_registers(urls, self._get_selected_registers())
@@ -580,10 +574,6 @@ class SearchTab(QWidget):
 
     def _start_form_download(self):
         params = self._collect_form_params()
-        if not params["condition"] and not params["intervention"] and not params["search_phrase"]:
-            QMessageBox.warning(self, "提示", "请至少输入一个搜索条件")
-            self._set_downloading(False)
-            return
 
         # Validate dates
         date_fields = [

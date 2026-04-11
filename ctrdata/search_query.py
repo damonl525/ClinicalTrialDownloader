@@ -81,7 +81,8 @@ def generate_queries(
         params.append("onlyWithResults = TRUE")
 
     if not params:
-        raise QueryError("请至少输入一个搜索条件")
+        # Allow empty search — ctrGenerateQueries() uses defaults
+        params.append('condition = ""')
 
     params_str = ",\n    ".join(params)
 
