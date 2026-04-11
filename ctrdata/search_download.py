@@ -35,6 +35,7 @@ def _load_single_url(
     euctrresults: bool = False,
     timeout: int = 600,
     skip_parse: bool = False,
+    on_timeout: Callable = None,
 ) -> dict:
     """Download a single URL into the database."""
     safe_url = _proc._r_escape(url)
@@ -80,7 +81,7 @@ def _load_single_url(
     )
 
     if callback:
-        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout)
+        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout, on_timeout=on_timeout)
         output = proc.stdout.strip()
         for line in reversed(output.split("\n")):
             line = line.strip()
@@ -110,6 +111,7 @@ def _load_multi_url(
     euctrresults: bool = False,
     timeout: int = 600,
     skip_parse: bool = False,
+    on_timeout: Callable = None,
 ) -> dict:
     """Download multiple URLs (multi-register search) into the database."""
     db = _proc._r_escape(bridge.db_path)
@@ -158,7 +160,7 @@ def _load_multi_url(
     )
 
     if callback:
-        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout)
+        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout, on_timeout=on_timeout)
         output = proc.stdout.strip()
         for line in reversed(output.split("\n")):
             line = line.strip()
@@ -184,6 +186,7 @@ def load_into_db(
     euctrresults: bool = False,
     timeout: int = 600,
     skip_parse: bool = False,
+    on_timeout: Callable = None,
 ) -> dict:
     """使用 ctrLoadQueryIntoDb 下载数据到数据库（仅数据，不含文档）"""
     if not bridge.db_path:
@@ -194,10 +197,12 @@ def load_into_db(
     if len(urls) == 1:
         return _load_single_url(
             bridge, urls[0], callback, only_count, register, euctrresults, timeout, skip_parse,
+            on_timeout,
         )
     else:
         return _load_multi_url(
             bridge, urls, callback, only_count, register, euctrresults, timeout, skip_parse,
+            on_timeout,
         )
 
 

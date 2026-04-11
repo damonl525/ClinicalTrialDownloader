@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
+from core.exceptions import DownloadTimeoutError
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,7 @@ class DownloadService:
         is_cancelled: Callable[[], bool] = lambda: False,
         on_log: Callable[[str], None] = None,
         on_progress: Callable[[int, int, str], None] = None,
+        on_timeout: Callable[[int, str], str] = None,
     ) -> DownloadResult:
         """
         Full form-download pipeline:
@@ -95,11 +98,18 @@ class DownloadService:
             _log(f"[{i+1}/{n_urls}] 正在下载 {reg}...")
             _prog(i, n_urls, f"正在下载 {reg}... ({i+1}/{n_urls})")
 
+            # Per-register timeout callback closure
+            reg_on_timeout = None
+            if on_timeout:
+                def reg_on_timeout(elapsed, _reg=reg):
+                    return on_timeout(elapsed, _reg)
+
             try:
                 result = self.bridge.load_into_db(
                     url=url,
                     callback=lambda line: _log(f"  {line}") if line and not line.startswith("{") and not line.startswith("ERROR") else None,
                     skip_parse=True,
+                    on_timeout=reg_on_timeout,
                 )
                 n = result.get("n", 0)
                 s = result.get("success", [])
@@ -135,6 +145,19 @@ class DownloadService:
                     parts.append(f"失败 {len(f)}")
                 _log(f"  {', '.join(parts)}")
                 _prog(i + 1, n_urls, f"{reg} 完成 ({i+1}/{n_urls})")
+
+            except DownloadTimeoutError as e:
+                if e.user_action == "cancel":
+                    _log("  用户取消下载")
+                    return DownloadResult(cancelled=True)
+                elif e.user_action == "skip":
+                    _log(f"  {reg}: 用户跳过（已运行 {e.elapsed}秒）")
+                    all_failed.append(f"{reg}: 超时（用户跳过）")
+                    all_failed_detail.append({"register": reg, "error": f"超时（已运行 {e.elapsed}秒）"})
+                else:
+                    _log(f"  {reg}: 超时 — {e}")
+                    all_failed.append(f"{reg}: {e}")
+                    all_failed_detail.append({"register": reg, "error": str(e)})
 
             except Exception as e:
                 _log(f"  {reg}: 失败 — {e}")

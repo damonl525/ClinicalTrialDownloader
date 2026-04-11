@@ -130,10 +130,12 @@ class CtrdataBridge:
         euctrresults: bool = False,
         timeout: int = 600,
         skip_parse: bool = False,
+        on_timeout: Callable = None,
     ) -> Dict[str, Any]:
         """使用 ctrLoadQueryIntoDb 下载数据到数据库（仅数据，不含文档）"""
         return _search.load_into_db(
             self, url, callback, only_count, register, euctrresults, timeout, skip_parse,
+            on_timeout,
         )
 
     def load_by_trial_id(

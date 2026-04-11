@@ -118,6 +118,7 @@ class SearchTab(QWidget):
     _status_msg = Signal(str)
     _log_signal = Signal(str, str)  # level, message
     _progress_update = Signal(int, int, str)  # current, total, message
+    _timeout_request = Signal(dict)  # ctx dict with event + choice
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -133,6 +134,7 @@ class SearchTab(QWidget):
         self._status_msg.connect(lambda msg: self._status_label.setText(msg))
         self._log_signal.connect(self._on_log_signal)
         self._progress_update.connect(self._on_progress_update)
+        self._timeout_request.connect(self._on_timeout_request)
 
         # Restore last search state
         self._restore_search_state()
@@ -606,6 +608,7 @@ class SearchTab(QWidget):
                     is_cancelled=lambda: not self.is_downloading,
                     on_log=self._log,
                     on_progress=lambda c, t, m: self._progress_update.emit(c, t, m),
+                    on_timeout=self._make_timeout_callback(),
                 )
                 if result.cancelled:
                     return
@@ -826,3 +829,54 @@ class SearchTab(QWidget):
         self.id_input.setText(s.value("trial_id", ""))
 
         s.endGroup()
+
+    # ── Timeout handling ──
+
+    def _on_timeout_request(self, ctx: dict):
+        """Show timeout dialog on GUI thread (called via signal)."""
+        elapsed = ctx.get("elapsed", 600)
+        register = ctx.get("register", "")
+
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("下载超时")
+        dlg.setIcon(QMessageBox.Warning)
+
+        reg_text = f"（注册中心: {register}）" if register else ""
+        dlg.setText(
+            f"下载已运行 {elapsed} 秒仍未完成{reg_text}\n\n"
+            "可能原因：\n"
+            "  • 搜索结果条目过多\n"
+            "  • 网络连接缓慢\n\n"
+            "请选择操作："
+        )
+
+        continue_btn = dlg.addButton("继续等待", QMessageBox.AcceptRole)
+        skip_btn = dlg.addButton("跳过此注册中心", QMessageBox.RejectRole)
+        cancel_btn = dlg.addButton("取消全部下载", QMessageBox.DestructiveRole)
+
+        dlg.exec()
+
+        clicked = dlg.clickedButton()
+        if clicked == continue_btn:
+            ctx["choice"] = "continue"
+        elif clicked == skip_btn:
+            ctx["choice"] = "skip"
+        else:
+            ctx["choice"] = "cancel"
+
+        ctx["event"].set()
+
+    def _make_timeout_callback(self):
+        """Create a thread-safe timeout callback for DownloadService."""
+        def on_timeout(elapsed: int, register: str) -> str:
+            event = threading.Event()
+            ctx = {
+                "event": event,
+                "elapsed": elapsed,
+                "register": register,
+                "choice": None,
+            }
+            self._timeout_request.emit(ctx)
+            event.wait()  # Block worker thread until user responds
+            return ctx["choice"] or "cancel"
+        return on_timeout

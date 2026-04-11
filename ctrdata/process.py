@@ -26,7 +26,7 @@ import queue as queue_mod
 import threading
 from typing import Any, Callable, Optional
 
-from core.exceptions import CtrdataError
+from core.exceptions import CtrdataError, DownloadTimeoutError
 from ctrdata.template_loader import render as _render
 
 logger = logging.getLogger(__name__)
@@ -118,6 +118,7 @@ def run_r_streaming(
     callback: Callable[[str], None] = None,
     timeout: int = 600,
     stall_timeout: int = None,
+    on_timeout: Callable[[int], str] = None,
 ) -> subprocess.CompletedProcess:
     """Execute R code, read stdout line-by-line with progress callbacks."""
     wrapped = (
@@ -185,15 +186,31 @@ def run_r_streaming(
                     break
                 now = time.time()
                 if timeout and (now - start) > timeout:
+                    if on_timeout:
+                        choice = on_timeout(int(now - start))
+                        if choice == "continue":
+                            start = now  # Extend timeout
+                            continue
                     proc.kill()
                     proc.wait(timeout=5)
-                    raise CtrdataError(f"R 执行超时（{timeout}秒）")
+                    raise DownloadTimeoutError(
+                        f"R 执行超时（{timeout}秒）",
+                        elapsed=int(now - start),
+                        user_action=choice if on_timeout else "",
+                    )
                 if stall_timeout and (now - last_activity) > stall_timeout:
+                    if on_timeout:
+                        choice = on_timeout(int(now - start))
+                        if choice == "continue":
+                            last_activity = now  # Extend stall timeout
+                            continue
                     proc.kill()
                     proc.wait(timeout=5)
-                    raise CtrdataError(
+                    raise DownloadTimeoutError(
                         f"下载无响应超时（{stall_timeout}秒），部分文件下载已终止。\n"
-                        f"可重新点击下载按钮重新下载全部文件。"
+                        f"可重新点击下载按钮重新下载全部文件。",
+                        elapsed=int(now - start),
+                        user_action=choice if on_timeout else "",
                     )
                 continue
 
@@ -204,9 +221,20 @@ def run_r_streaming(
             if callback:
                 callback(line)
             if timeout and (time.time() - start) > timeout:
-                proc.kill()
-                proc.wait(timeout=5)
-                raise CtrdataError(f"R 执行超时（{timeout}秒）")
+                _choice = None
+                if on_timeout:
+                    _choice = on_timeout(int(time.time() - start))
+                    if _choice == "continue":
+                        start = time.time()  # Extend timeout
+                        # Don't raise — keep reading
+                    else:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                        raise DownloadTimeoutError(
+                            f"R 执行超时（{timeout}秒）",
+                            elapsed=int(time.time() - start),
+                            user_action=_choice,
+                        )
 
         proc.wait(timeout=10)
         stdout = "\n".join(stdout_lines)
