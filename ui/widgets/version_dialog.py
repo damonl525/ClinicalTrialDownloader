@@ -5,6 +5,7 @@ Version dialog — shows app version, credits, and changelog.
 """
 
 import os
+import sys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -36,10 +37,7 @@ class VersionDialog(QDialog):
         header = QHBoxLayout()
 
         icon_label = QLabel()
-        icon_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "assets", "icon.png",
-        )
+        icon_path = os.path.join(base_dir, "assets", "icon.png")
         if os.path.exists(icon_path):
             pixmap = QPixmap(icon_path)
             icon_label.setPixmap(pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
@@ -74,10 +72,13 @@ class VersionDialog(QDialog):
         changelog_edit.setReadOnly(True)
         changelog_edit.setFont(get_font("mono"))
 
-        changelog_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "CHANGELOG.md",
-        )
+        # Resolve base directory: PyInstaller bundle or source tree
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+        changelog_path = os.path.join(base_dir, "CHANGELOG.md")
         if os.path.exists(changelog_path):
             with open(changelog_path, "r", encoding="utf-8") as f:
                 changelog_edit.setPlainText(f.read())
