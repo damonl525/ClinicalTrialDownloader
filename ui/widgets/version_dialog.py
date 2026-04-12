@@ -30,6 +30,12 @@ class VersionDialog(QDialog):
     def _build_ui(self):
         from core.constants import APP_NAME, APP_NAME_EN, APP_VERSION
 
+        # Resolve base directory: PyInstaller bundle or source tree
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
@@ -71,12 +77,6 @@ class VersionDialog(QDialog):
         changelog_edit = QTextEdit()
         changelog_edit.setReadOnly(True)
         changelog_edit.setFont(get_font("mono"))
-
-        # Resolve base directory: PyInstaller bundle or source tree
-        if getattr(sys, 'frozen', False):
-            base_dir = sys._MEIPASS
-        else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
         changelog_path = os.path.join(base_dir, "CHANGELOG.md")
         if os.path.exists(changelog_path):
