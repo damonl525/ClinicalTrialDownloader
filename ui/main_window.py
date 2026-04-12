@@ -186,13 +186,17 @@ class MainWindow(QMainWindow):
         self.status = self.statusBar()
         self.status.showMessage("就绪")
 
-        # Clickable version label
-        self._version_label = QLabel(f"v{APP_VERSION}")
+        # Clickable version label (QPushButton for reliable click handling)
+        self._version_label = QPushButton(f"v{APP_VERSION}")
+        self._version_label.setFlat(True)
         self._version_label.setFont(get_font("caption"))
-        self._version_label.setStyleSheet("color: #64748B; margin-right: 8px;")
+        self._version_label.setStyleSheet(
+            "QPushButton { color: #64748B; border: none; margin-right: 8px; padding: 0; }"
+            "QPushButton:hover { color: #3B82F6; }"
+        )
         self._version_label.setCursor(Qt.PointingHandCursor)
         self._version_label.setToolTip("点击查看版本历史")
-        self._version_label.mousePressEvent = lambda _: self._show_version_dialog()
+        self._version_label.clicked.connect(self._show_version_dialog)
         self.status.addPermanentWidget(self._version_label)
 
         self.r_status_label = QLabel("正在检查 R 环境...")
