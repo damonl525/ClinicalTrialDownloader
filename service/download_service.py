@@ -62,8 +62,12 @@ class DownloadService:
 
         Returns DownloadResult with all aggregated data.
         """
-        _log = on_log or (lambda m: None)
+        _ui_log = on_log or (lambda m: None)
         _prog = on_progress or (lambda c, t, m: None)
+
+        def _log(msg):
+            _ui_log(msg)
+            logger.info(msg)
 
         # 1. Generate queries
         _log("正在通过 ctrGenerateQueries() 生成查询...")
@@ -220,7 +224,10 @@ class DownloadService:
         on_progress: Callable[[int, int, str], None] = None,
     ) -> dict:
         """Parse URL → download → return raw result dict."""
-        _log = on_log or (lambda m: None)
+        _ui_log = on_log or (lambda m: None)
+        def _log(msg):
+            _ui_log(msg)
+            logger.info(msg)
         _prog = on_progress or (lambda c, t, m: None)
 
         _prog(0, 2, "正在解析 URL...")
@@ -260,7 +267,10 @@ class DownloadService:
         on_log: Callable[[str], None] = None,
     ) -> dict:
         """Download single trial by ID → return result dict."""
-        _log = on_log or (lambda m: None)
+        _ui_log = on_log or (lambda m: None)
+        def _log(msg):
+            _ui_log(msg)
+            logger.info(msg)
 
         result = self.bridge.load_by_trial_id(
             trial_id,
@@ -285,7 +295,10 @@ class DownloadService:
         on_log: Callable[[str], None] = None,
     ) -> dict:
         """Incremental update of a historical query → return result."""
-        _log = on_log or (lambda m: None)
+        _ui_log = on_log or (lambda m: None)
+        def _log(msg):
+            _ui_log(msg)
+            logger.info(msg)
 
         result = self.bridge.update_last_query(
             query_index=query_idx,
@@ -309,7 +322,10 @@ class DownloadService:
         on_log: Callable[[str], None] = None,
     ) -> list:
         """Find active substance synonyms → return list of strings."""
-        _log = on_log or (lambda m: None)
+        _ui_log = on_log or (lambda m: None)
+        def _log(msg):
+            _ui_log(msg)
+            logger.info(msg)
 
         synonyms = self.bridge.find_synonyms(intervention)
 

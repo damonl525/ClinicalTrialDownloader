@@ -4,6 +4,7 @@
 Main window — QMainWindow with toolbar, 3-tab widget, and status bar.
 """
 
+import logging
 import os
 import threading
 
@@ -66,6 +67,19 @@ class MainWindow(QMainWindow):
         self._env_check_complete.connect(self._on_env_check_complete)
         self._check_r_environment()
 
+        # Qt log handler — bridges Python logging to GUI log dialog
+        from core.log_handler import QtLogHandler
+        self._qt_handler = QtLogHandler(self)
+        self._qt_handler.setFormatter(logging.Formatter(
+            "[%(levelname)s] %(name)s: %(message)s",
+        ))
+        self._qt_handler.setLevel(logging.INFO)
+        logging.getLogger().addHandler(self._qt_handler)
+        # Ensure root logger allows INFO+ through to handler
+        if logging.getLogger().level > logging.INFO:
+            logging.getLogger().setLevel(logging.INFO)
+        self._log_dialog = None  # Created on demand
+
         # Optional file logging (controlled by QSettings)
         self._file_log_handler = None
         from PySide6.QtCore import QSettings
@@ -85,8 +99,13 @@ class MainWindow(QMainWindow):
                 self.bridge.cancel()
             except Exception:
                 pass
+        # Clean up log handlers
         if self._file_log_handler:
             remove_file_logging(self._file_log_handler)
+        if self._qt_handler:
+            logging.getLogger().removeHandler(self._qt_handler)
+        if self._log_dialog:
+            self._log_dialog.close()
         event.accept()
 
     # ── Toolbar ──
@@ -128,6 +147,18 @@ class MainWindow(QMainWindow):
         self.settings_btn.clicked.connect(self._open_settings)
         toolbar.addWidget(self.settings_btn)
 
+        # Log viewer button
+        self.log_btn = QPushButton()
+        log_icon = _icon("fa5s.terminal")
+        if log_icon:
+            self.log_btn.setIcon(log_icon)
+        else:
+            self.log_btn.setText("日志")
+        self.log_btn.setToolTip("查看运行日志")
+        self.log_btn.setObjectName("secondary")
+        self.log_btn.clicked.connect(self._show_log_dialog)
+        toolbar.addWidget(self.log_btn)
+
     def _cycle_theme(self):
         modes = ["system", "light", "dark"]
         current = get_theme_mode()
@@ -143,6 +174,16 @@ class MainWindow(QMainWindow):
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
         dlg.exec()
+
+    def _show_log_dialog(self):
+        """Show (or create) the non-modal log viewer dialog."""
+        from ui.widgets.log_dialog import LogDialog
+        if self._log_dialog is None or not self._log_dialog.isVisible():
+            self._log_dialog = LogDialog(self._qt_handler, self)
+            self._log_dialog.show()
+        else:
+            self._log_dialog.raise_()
+            self._log_dialog.activateWindow()
 
     def _show_version_dialog(self):
         from ui.widgets.version_dialog import VersionDialog

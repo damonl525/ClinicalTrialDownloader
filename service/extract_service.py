@@ -54,6 +54,12 @@ class ExtractService:
         # the user's chosen trials, so whole-database dedup is unnecessary.
         effective_dedup = deduplicate and not scope_ids
 
+        logger.info(
+            f"Extract: scope={'current' if scope_ids else 'all'}, "
+            f"dedup={effective_dedup}, fields={len(fields or [])}, "
+            f"concepts={len(concepts or [])}"
+        )
+
         df = self.bridge.extract_to_dataframe(
             fields=fields if fields else None,
             calculate=concepts if concepts else None,
@@ -70,8 +76,11 @@ class ExtractService:
         # Register filtering by _id prefix
         if filter_register and "_id" in df.columns:
             prefix = _register_prefix(filter_register)
+            before = len(df)
             df = df[df["_id"].astype(str).str.startswith(prefix)]
+            logger.info(f"Register filter ({filter_register}): {before} → {len(df)} rows")
 
+        logger.info(f"Extract complete: {len(df)} rows × {len(df.columns)} cols")
         return df
 
     # ================================================================
@@ -91,6 +100,7 @@ class ExtractService:
 
         Returns raw result dict from bridge.
         """
+        logger.info(f"Document download: {len(trial_ids)} trials → {documents_path}")
         result = self.bridge.download_documents_for_ids(
             trial_ids=trial_ids,
             documents_path=documents_path,

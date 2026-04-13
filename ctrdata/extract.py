@@ -171,7 +171,7 @@ def extract_to_dataframe(
     )
 
     try:
-        _proc.run_r_json(bridge, r_code)
+        result = _proc.run_r_json(bridge, r_code)
 
         if os.path.exists(tmp_csv):
             df = pd.read_csv(tmp_csv, encoding="utf-8-sig", low_memory=False)
@@ -179,6 +179,14 @@ def extract_to_dataframe(
                 os.unlink(tmp_csv)
             except Exception:
                 pass
+
+            # Diagnostic: log R-layer row counts
+            n_r_after_extract = result.get("n_after_extract", "?") if isinstance(result, dict) else "?"
+            n_r_final = result.get("rows", "?") if isinstance(result, dict) else "?"
+            logger.info(
+                f"Extract: R returned {n_r_after_extract} rows, "
+                f"after dedup+scope: {n_r_final}, CSV read: {len(df)}"
+            )
 
             # Python-side scope fallback (catches edge cases R prefix match missed)
             if scope_ids and "_id" in df.columns:
