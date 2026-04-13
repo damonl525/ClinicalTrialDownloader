@@ -82,6 +82,14 @@ class CtrdataBridge:
         """获取所有查询历史"""
         return _conn.get_query_history(self)
 
+    def clear_collection(self) -> Dict[str, Any]:
+        """清空当前集合的所有记录（保留数据库文件）"""
+        return _conn.clear_collection(self)
+
+    def delete_by_prefix(self, prefix: str) -> Dict[str, Any]:
+        """删除 _id 以指定前缀开头的记录"""
+        return _conn.delete_by_prefix(self, prefix)
+
     # ============================================================
     # 2. Search URL generation
     # ============================================================
@@ -380,12 +388,21 @@ class CtrdataBridge:
         filter_date_end: str = "",
         filter_condition: str = "",
         filter_intervention: str = "",
+        scope_ids: List[str] = None,
     ) -> pd.DataFrame:
         """使用 dbGetFieldsIntoDf 提取数据"""
         return _extract.extract_to_dataframe(
-            self, fields, calculate, deduplicate,
-            filter_phase, filter_status, filter_date_start, filter_date_end,
-            filter_condition, filter_intervention,
+            self,
+            fields=fields,
+            calculate=calculate,
+            deduplicate=deduplicate,
+            filter_phase=filter_phase,
+            filter_status=filter_status,
+            filter_date_start=filter_date_start,
+            filter_date_end=filter_date_end,
+            filter_condition=filter_condition,
+            filter_intervention=filter_intervention,
+            scope_ids=scope_ids,
         )
 
     # ============================================================

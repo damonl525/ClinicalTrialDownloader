@@ -11,7 +11,7 @@ import os
 # ================================================================
 APP_NAME = "临床试验数据下载器"
 APP_NAME_EN = "Clinical Trial Data Downloader"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.1.0"
 
 # ================================================================
 # 数据库
@@ -162,6 +162,25 @@ DEFAULT_CONCEPTS = [
     "f.trialTitle",
     "f.startDate",
 ]
+
+# ================================================================
+# R 错误中文翻译
+# ================================================================
+# ================================================================
+# FDA openFDA API — 审评资料匹配
+# ================================================================
+FDA_API_BASE = "https://api.fda.gov/drug/drugsfda.json"
+FDA_API_RATE_LIMIT = 1.5  # seconds between calls (no API key, ~40/min)
+
+FDA_REVIEW_DOC_TYPES = {
+    "Medical Review(s)": "医学审评",
+    "Statistical Review(s)": "统计审评",
+    "Chemistry Review(s)": "化学审评",
+    "Clinical Pharmacology and Biopharmaceutics Review(s)": "临床药理审评",
+    "Pharmacology Review(s)": "药理毒理审评",
+    "Summary Review": "综述报告",
+    "Other Review(s)": "其他审评",
+}
 
 # ================================================================
 # R 错误中文翻译

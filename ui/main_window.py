@@ -240,7 +240,9 @@ class MainWindow(QMainWindow):
         if info.get("r_available") and not info.get("error"):
             try:
                 from ctrdata_core import CtrdataBridge
-                self.bridge = CtrdataBridge()
+                # Guard: don't overwrite an already-connected bridge
+                if not self.bridge:
+                    self.bridge = CtrdataBridge()
                 ver = info.get("r_version", "?")
                 pkg = info.get("packages", {}).get("ctrdata", "?")
                 self._status_msg(f"{ver} + ctrdata {pkg} 就绪", "ok")

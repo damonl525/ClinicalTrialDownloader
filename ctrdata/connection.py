@@ -104,3 +104,70 @@ def get_query_history(bridge) -> pd.DataFrame:
                 pass
         logger.warning(f"获取查询历史失败: {e}")
         return pd.DataFrame()
+
+
+# ============================================================
+# Record deletion
+# ============================================================
+
+def clear_collection(bridge) -> dict:
+    """Delete all records from the current collection (keeps database file)."""
+    if not bridge.db_path:
+        raise DatabaseError("请先连接数据库")
+
+    db = _proc._r_escape(bridge.db_path)
+    col = _proc._r_escape(bridge.collection)
+
+    delete_block = (
+        f'DBI::dbExecute(con$con, sprintf(\'DELETE FROM "%s"\', con$collection))\n'
+        "n_after <- 0L"
+    )
+
+    r_code = _render(
+        "delete_records",
+        db=db,
+        col=col,
+        delete_block=delete_block,
+        n_after_expr="n_after",
+    )
+
+    try:
+        result = _proc.run_r_json(bridge, r_code)
+        if isinstance(result, dict) and result.get("ok"):
+            logger.info(f"已清空集合: {bridge.collection} (删除 {result.get('deleted', 0)} 条)")
+        return result
+    except Exception as e:
+        raise CtrdataError(f"清空记录失败: {e}")
+
+
+def delete_by_prefix(bridge, prefix: str) -> dict:
+    """Delete records whose _id starts with the given prefix."""
+    if not bridge.db_path:
+        raise DatabaseError("请先连接数据库")
+
+    db = _proc._r_escape(bridge.db_path)
+    col = _proc._r_escape(bridge.collection)
+    safe_prefix = _proc._r_escape(prefix)
+
+    delete_block = (
+        f'DBI::dbExecute(con$con, sprintf(\'DELETE FROM "%s" WHERE "_id" LIKE ?\', con$collection),'
+        f' params = list(paste0("{safe_prefix}", "%")))\n'
+        "n_after_res <- DBI::dbGetQuery(con$con, sprintf('SELECT COUNT(*) AS n FROM \"%s\"', con$collection))\n"
+        "n_after <- ifelse(is.null(n_after_res$n) || is.na(n_after_res$n[1]), 0L, n_after_res$n[1])"
+    )
+
+    r_code = _render(
+        "delete_records",
+        db=db,
+        col=col,
+        delete_block=delete_block,
+        n_after_expr="n_after",
+    )
+
+    try:
+        result = _proc.run_r_json(bridge, r_code)
+        if isinstance(result, dict) and result.get("ok"):
+            logger.info(f"已删除前缀 {prefix}: {result.get('deleted', 0)} 条")
+        return result
+    except Exception as e:
+        raise CtrdataError(f"删除记录失败: {e}")

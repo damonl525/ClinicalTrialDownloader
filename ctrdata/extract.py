@@ -66,6 +66,7 @@ def extract_to_dataframe(
     filter_date_end: str = "",
     filter_condition: str = "",
     filter_intervention: str = "",
+    scope_ids: List[str] = None,
 ) -> pd.DataFrame:
     """
     使用 dbGetFieldsIntoDf 提取数据，通过 CSV 传回 Python
@@ -80,6 +81,7 @@ def extract_to_dataframe(
         filter_date_end: 结束日期 "YYYY-MM-DD" 或空
         filter_condition: 适应症关键词，空格分隔
         filter_intervention: 干预措施关键词，空格分隔
+        scope_ids: 限定提取的试验 ID 列表，空则提取全部
 
     Returns:
         pandas DataFrame
@@ -110,6 +112,11 @@ def extract_to_dataframe(
             if f not in fields:
                 fields.append(f)
 
+    # Always include intervention field for FDA matching
+    for f in INTERVENTION_FIELDS:
+        if f not in fields:
+            fields.append(f)
+
     # Use temp CSV file to transfer data
     tmp_csv = tempfile.mktemp(suffix=".csv")
     db = _proc._r_escape(bridge.db_path)
@@ -135,6 +142,23 @@ def extract_to_dataframe(
         }
         """
 
+    scope_block = ""
+    if scope_ids:
+        ids_str = ", ".join(f'"{_proc._r_escape(sid)}"' for sid in scope_ids)
+        # Prefix matching: EUCTR _id includes country suffix (e.g. EUCTRxxx-DE)
+        # but ctrLoadQueryIntoDb()$success returns the base ID without suffix.
+        scope_block = (
+            "if (\"_id\" %in% names(df)) {\n"
+            f"    scope_ids <- c({ids_str})\n"
+            "    id_col <- as.character(df$`_id`)\n"
+            "    mask <- rep(FALSE, length(id_col))\n"
+            "    for (sid in scope_ids) {\n"
+            "        mask <- mask | startsWith(id_col, sid)\n"
+            "    }\n"
+            "    df <- df[mask, ]\n"
+            "}\n"
+        )
+
     r_code = _render(
         "extract_dataframe",
         db=db,
@@ -142,6 +166,7 @@ def extract_to_dataframe(
         fields_r=fields_r,
         calc_r=calc_r,
         dedup_block=dedup_block,
+        scope_block=scope_block,
         csv_path=csv_path,
     )
 
@@ -155,11 +180,19 @@ def extract_to_dataframe(
             except Exception:
                 pass
 
+            # Python-side scope fallback (catches edge cases R prefix match missed)
+            if scope_ids and "_id" in df.columns:
+                id_col = df["_id"].astype(str)
+                mask = id_col.apply(
+                    lambda x: any(x.startswith(str(sid)) for sid in scope_ids)
+                )
+                df = df[mask]
+
             # Post-download filtering: phase / status
             if filter_phase and ".trialPhase" in df.columns:
-                df = df[df[".trialPhase"].str.contains(filter_phase, case=False, na=False)]
+                df = df[df[".trialPhase"].astype(str).str.contains(filter_phase, case=False, na=False)]
             if filter_status and ".statusRecruitment" in df.columns:
-                df = df[df[".statusRecruitment"].str.contains(filter_status, case=False, na=False)]
+                df = df[df[".statusRecruitment"].astype(str).str.contains(filter_status, case=False, na=False)]
 
             # Date range filter — NaT values are preserved
             if (filter_date_start or filter_date_end) and ".startDate" in df.columns:

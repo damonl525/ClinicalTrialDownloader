@@ -10,13 +10,13 @@ import threading
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QFrame, QSizePolicy, QScrollArea,
-    QMessageBox, QInputDialog,
+    QMessageBox, QInputDialog, QComboBox,
 )
 from PySide6.QtCore import Qt, Signal
 
 from ui.theme import get_font, SPACING
 from ui.app import get_settings, set_recent_db, get_recent_db
-from core.constants import DEFAULT_DB_NAME, DEFAULT_COLLECTION
+from core.constants import DEFAULT_DB_NAME, DEFAULT_COLLECTION, SUPPORTED_REGISTERS
 
 
 class DatabaseTab(QWidget):
@@ -26,6 +26,8 @@ class DatabaseTab(QWidget):
     _history_loaded = Signal(object)
     _update_complete = Signal(int, int, int, int)  # query_index, n, success, failed
     _update_error = Signal(str)
+    _delete_complete = Signal(int, int)  # deleted, remaining
+    _delete_error = Signal(str)
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -37,6 +39,8 @@ class DatabaseTab(QWidget):
         self._history_loaded.connect(self._render_history)
         self._update_complete.connect(self._on_update_complete)
         self._update_error.connect(self._on_update_error)
+        self._delete_complete.connect(self._on_delete_complete)
+        self._delete_error.connect(self._on_delete_error)
 
         # Initialize env indicator from current state
         self._update_env_indicator()
@@ -124,6 +128,35 @@ class DatabaseTab(QWidget):
         self.info_label.setStyleSheet("color: #64748B;")
         self.info_label.setWordWrap(True)
         card_layout.addWidget(self.info_label)
+
+        # ── Record management row ──
+        record_row = QHBoxLayout()
+        record_row.addWidget(QLabel("记录管理:"))
+        self.clear_all_btn = QPushButton("清空所有记录")
+        self.clear_all_btn.setObjectName("secondary")
+        self.clear_all_btn.setMinimumWidth(110)
+        self.clear_all_btn.setToolTip("删除当前集合中的所有试验记录，保留数据库文件")
+        self.clear_all_btn.clicked.connect(self._clear_all_records)
+        self.clear_all_btn.setEnabled(False)
+        record_row.addWidget(self.clear_all_btn)
+
+        record_row.addWidget(QLabel("按注册中心:"))
+        self.reg_delete_combo = QComboBox()
+        self.reg_delete_combo.setMinimumWidth(180)
+        self.reg_delete_combo.addItem("选择注册中心...")
+        for key, name in SUPPORTED_REGISTERS.items():
+            self.reg_delete_combo.addItem(f"{name} ({key})", key)
+        record_row.addWidget(self.reg_delete_combo)
+
+        self.reg_delete_btn = QPushButton("删除")
+        self.reg_delete_btn.setObjectName("secondary")
+        self.reg_delete_btn.setFixedWidth(60)
+        self.reg_delete_btn.setToolTip("删除所选注册中心的所有记录")
+        self.reg_delete_btn.clicked.connect(self._delete_by_register)
+        self.reg_delete_btn.setEnabled(False)
+        record_row.addWidget(self.reg_delete_btn)
+        record_row.addStretch()
+        card_layout.addLayout(record_row)
 
         self.delete_btn = QPushButton("删除数据库")
         self.delete_btn.setObjectName("danger")
@@ -230,6 +263,8 @@ class DatabaseTab(QWidget):
         """Toggle button states based on connection status."""
         self.disconnect_btn.setEnabled(connected)
         self.delete_btn.setEnabled(connected)
+        self.clear_all_btn.setEnabled(connected)
+        self.reg_delete_btn.setEnabled(connected)
 
     def _disconnect_db(self):
         """Disconnect from current database."""
@@ -417,6 +452,113 @@ class DatabaseTab(QWidget):
     def _on_update_error(self, error_msg):
         self.app.status.showMessage("更新失败")
         QMessageBox.critical(self, "更新失败", error_msg)
+
+    # ── Record deletion ──
+
+    def _clear_all_records(self):
+        """Delete all records from the current collection."""
+        if not self.app.bridge or not self.app.bridge.db_path:
+            return
+
+        reply = QMessageBox.warning(
+            self, "清空记录",
+            "确定要清空当前集合的所有试验记录吗？\n\n"
+            "数据库文件保留，但所有试验数据和查询历史将被删除。\n"
+            "此操作不可恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._set_connected_state(False)
+        self.app.status.showMessage("正在清空记录...")
+
+        def _worker():
+            try:
+                result = self.app.bridge.clear_collection()
+                deleted = result.get("deleted", 0) if isinstance(result, dict) else 0
+                remaining = result.get("remaining", 0) if isinstance(result, dict) else 0
+                self._delete_complete.emit(deleted, remaining)
+            except Exception as e:
+                self._delete_error.emit(str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _delete_by_register(self):
+        """Delete records from the selected registry."""
+        if not self.app.bridge or not self.app.bridge.db_path:
+            return
+
+        idx = self.reg_delete_combo.currentIndex()
+        if idx <= 0:
+            QMessageBox.information(self, "提示", "请先选择要删除的注册中心")
+            return
+
+        reg_key = self.reg_delete_combo.itemData(idx)
+        reg_name = self.reg_delete_combo.itemText(idx)
+
+        # Map register key to _id prefix
+        _REGISTER_PREFIXES = {
+            "CTGOV2": "NCT",
+            "EUCTR": "EUCTR",
+            "ISRCTN": "ISRCTN",
+            "CTIS": "EU",
+        }
+        prefix = _REGISTER_PREFIXES.get(reg_key, reg_key)
+
+        reply = QMessageBox.warning(
+            self, "删除注册中心记录",
+            f"确定要删除所有 {reg_name} 的记录吗？\n\n"
+            f"将删除 _id 以 \"{prefix}\" 开头的所有记录。\n"
+            "此操作不可恢复。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        self._set_connected_state(False)
+        self.app.status.showMessage(f"正在删除 {reg_name} 记录...")
+
+        def _worker():
+            try:
+                result = self.app.bridge.delete_by_prefix(prefix)
+                deleted = result.get("deleted", 0) if isinstance(result, dict) else 0
+                remaining = result.get("remaining", 0) if isinstance(result, dict) else 0
+                self._delete_complete.emit(deleted, remaining)
+            except Exception as e:
+                self._delete_error.emit(str(e))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_delete_complete(self, deleted, remaining):
+        self._set_connected_state(True)
+        msg = f"已删除 {deleted} 条记录"
+        if remaining > 0:
+            msg += f"，剩余 {remaining} 条"
+        self.app.status.showMessage(msg)
+        QMessageBox.information(self, "删除完成", msg)
+        self._refresh_history()
+        # Update db info
+        if self.app.bridge:
+            try:
+                info = self.app.bridge.get_db_info()
+                total = info.get("total_records", "?")
+                path = self.app.bridge.db_path
+                collection = self.app.bridge.collection
+                self.info_label.setText(
+                    f"已连接: {os.path.basename(path)}\n"
+                    f"路径: {path}  |  集合: {collection}  |  记录数: {total}"
+                )
+            except Exception:
+                pass
+        self.app.update_db_status()
+
+    def _on_delete_error(self, error_msg):
+        self._set_connected_state(True)
+        self.app.status.showMessage("删除失败")
+        QMessageBox.critical(self, "删除失败", error_msg)
 
     # ── Environment indicator ──
 
