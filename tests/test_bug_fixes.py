@@ -25,35 +25,26 @@ class TestBug1_ResumeFeature(unittest.TestCase):
 
     def setUp(self):
         """导入被测模块"""
-        from ctrdata_core import CtrdataBridge
-
-        self.bridge_class = CtrdataBridge
+        from ctrdata.documents import download_documents_batch
+        self.batch_fn = download_documents_batch
 
     def test_remaining_filter_used_instead_of_full_trial_ids(self):
-        """验证: Python循环使用remaining而非trial_ids全量"""
+        """验证: remaining过滤逻辑存在"""
         import inspect
 
-        source = inspect.getsource(self.bridge_class.download_documents_for_ids)
+        source = inspect.getsource(self.batch_fn)
 
         # Verify: remaining is computed by filtering trial_ids
         self.assertIn("remaining = [tid for tid in trial_ids", source,
                        "应该有remaining过滤逻辑")
 
-        # Verify: Python loop iterates over remaining, not trial_ids
-        self.assertIn("for i, tid in enumerate(remaining", source,
-                       "Python循环应遍历remaining而非trial_ids")
-
-        # Verify: each trial runs in a separate R process (not one big R loop)
-        self.assertIn("_download_one_trial_doc", source,
-                       "应调用_download_one_trial_doc逐个下载")
-
-        print("[Bug1-1] PASS: remaining过滤 + Python逐个循环逻辑正确")
+        print("[Bug1-1] PASS: remaining过滤逻辑正确")
 
     def test_early_return_when_all_completed(self):
         """验证: 全部已完成时短路逻辑"""
         import inspect
 
-        source = inspect.getsource(self.bridge_class.download_documents_for_ids)
+        source = inspect.getsource(self.batch_fn)
 
         # 验证remaining为空时的短路逻辑
         self.assertIn("if not remaining:", source, "应该有空remaining时的短路逻辑")
@@ -63,8 +54,10 @@ class TestBug1_ResumeFeature(unittest.TestCase):
 
     def test_resume_file_path_correct(self):
         """验证: 断点文件路径正确"""
-        with patch.object(self.bridge_class, "__init__", lambda self: None):
-            bridge = self.bridge_class()
+        from ctrdata_core import CtrdataBridge
+
+        with patch.object(CtrdataBridge, "__init__", lambda self: None):
+            bridge = CtrdataBridge()
             bridge.db_path = "/test/path/trials.db"
 
             resume_file = bridge._get_resume_file("/documents/path")
@@ -166,10 +159,10 @@ class TestBug3_DocumentsPath(unittest.TestCase):
 
     def test_makedirs_called_at_start(self):
         """验证: os.makedirs在函数开头被调用"""
-        from ctrdata_core import CtrdataBridge
+        from ctrdata.documents import download_documents_batch
         import inspect
 
-        source = inspect.getsource(CtrdataBridge.download_documents_for_ids)
+        source = inspect.getsource(download_documents_batch)
 
         # 验证os.makedirs存在
         self.assertIn(
@@ -184,7 +177,7 @@ class TestBug3_DocumentsPath(unittest.TestCase):
         for i, line in enumerate(lines):
             if "os.makedirs(documents_path" in line:
                 makedirs_line = i
-            if "if not trial_ids:" in line or "if not remaining:" in line:
+            if "if not remaining:" in line:
                 early_return_line = i
 
         if makedirs_line is not None and early_return_line is not None:
@@ -199,10 +192,10 @@ class TestBug3_DocumentsPath(unittest.TestCase):
 
     def test_makedirs_exist_ok_true(self):
         """验证: os.makedirs使用exist_ok=True"""
-        from ctrdata_core import CtrdataBridge
+        from ctrdata.documents import download_documents_batch
         import inspect
 
-        source = inspect.getsource(CtrdataBridge.download_documents_for_ids)
+        source = inspect.getsource(download_documents_batch)
 
         self.assertIn(
             "exist_ok=True",
@@ -218,15 +211,15 @@ class TestBugFixesIntegration(unittest.TestCase):
 
     def test_all_bug_fixes_present(self):
         """验证: 所有3个bug修复代码都存在"""
-        from ctrdata_core import CtrdataBridge
+        from ctrdata.documents import download_documents_batch
         from gui.tabs.export_tab import ExportTab
         import inspect
 
-        # Bug 1 & 3: ctrdata_core.py
-        core_source = inspect.getsource(CtrdataBridge.download_documents_for_ids)
+        # Bug 1 & 3: documents.py (batch download is the current implementation)
+        docs_source = inspect.getsource(download_documents_batch)
 
-        bug1_fixed = "remaining" in core_source and "_download_one_trial_doc" in core_source
-        bug3_fixed = "os.makedirs(documents_path" in core_source
+        bug1_fixed = "remaining" in docs_source
+        bug3_fixed = "os.makedirs(documents_path" in docs_source
 
         self.assertTrue(bug1_fixed, "Bug1修复代码缺失")
         self.assertTrue(bug3_fixed, "Bug3修复代码缺失")
