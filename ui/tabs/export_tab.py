@@ -7,12 +7,13 @@ Tab 3: Extract & Export — extract with f.* functions, filter, preview, export 
 import os
 import re
 import threading
+import time
 import webbrowser
 
 import pandas as pd
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QCheckBox, QFrame, QProgressBar, QFileDialog,
+    QPushButton, QCheckBox, QFrame, QFileDialog,
     QSizePolicy, QComboBox, QHeaderView, QMessageBox, QMenu,
     QScrollArea,
 )
@@ -21,6 +22,7 @@ from PySide6.QtGui import QColor, QFont
 
 from ui.theme import get_font, SPACING
 from ui.widgets.card import CollapsibleCard
+from ui.widgets.progress import ProgressPanel
 from ui.widgets.table_model import PandasTableModel
 from core.constants import (
     CONCEPT_FUNCTIONS, DEFAULT_CONCEPTS, TREEVIEW_DISPLAY_LIMIT,
@@ -124,6 +126,7 @@ class ExportTab(QWidget):
     _fda_doc_progress = Signal(int, int, str)  # current, total, filename
     _fda_doc_complete = Signal(dict)
     _fda_doc_error = Signal(str)
+    _fields_loaded = Signal(list)   # loaded field names from background thread
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -132,6 +135,8 @@ class ExportTab(QWidget):
         self._current_page = 1
         self._total_pages = 1
         self._last_docs_regexp = None
+        self._is_extracting = False
+        self._doc_start_time = None
         self._setup_ui()
 
         # FDA match state
@@ -153,6 +158,7 @@ class ExportTab(QWidget):
         self._fda_doc_progress.connect(self._on_fda_doc_progress)
         self._fda_doc_complete.connect(self._on_fda_doc_complete)
         self._fda_doc_error.connect(self._on_fda_doc_error)
+        self._fields_loaded.connect(self._on_fields_loaded)
 
     def _make_card(self) -> QFrame:
         frame = QFrame()
@@ -322,17 +328,16 @@ class ExportTab(QWidget):
         extract_row.addStretch()
         layout.addLayout(extract_row)
 
-        # ── FDA match progress (below extract row) ──
-        fda_progress_row = QHBoxLayout()
-        self.fda_progress = QProgressBar()
-        self.fda_progress.setVisible(False)
-        self.fda_progress.setMaximumHeight(16)
-        fda_progress_row.addWidget(self.fda_progress)
-        self.fda_status = QLabel("请先提取数据")
-        self.fda_status.setStyleSheet("color: #64748B;")
-        fda_progress_row.addWidget(self.fda_status)
-        fda_progress_row.addStretch()
-        layout.addLayout(fda_progress_row)
+        # ── Extraction progress (below extract row) ──
+        self.extract_progress = ProgressPanel()
+        layout.addWidget(self.extract_progress)
+
+        # ── FDA match progress (below extract progress) ──
+        self.fda_progress = ProgressPanel()
+        layout.addWidget(self.fda_progress)
+        self.fda_status_label = QLabel("请先提取数据")
+        self.fda_status_label.setStyleSheet("color: #64748B;")
+        layout.addWidget(self.fda_status_label)
 
         # ── Data preview table ──
         preview_card = self._make_card()
@@ -438,9 +443,8 @@ class ExportTab(QWidget):
 
         doc_layout.addLayout(doc_btn_row)
 
-        self.doc_progress_bar = QProgressBar()
-        self.doc_progress_bar.setVisible(False)
-        doc_layout.addWidget(self.doc_progress_bar)
+        self.doc_progress = ProgressPanel()
+        doc_layout.addWidget(self.doc_progress)
 
         self.doc_status = QLabel("请先提取数据")
         self.doc_status.setStyleSheet("color: #64748B;")
@@ -480,32 +484,41 @@ class ExportTab(QWidget):
         if not self.app.bridge or not self.app.bridge.db_path:
             QMessageBox.warning(self, "提示", "请先连接数据库")
             return
-        self.fields_status.setText("正在加载...")
-        try:
-            fields = self.app.bridge.find_fields(".*")
-            # Clear old checkboxes
-            while self._fields_container.count():
-                item = self._fields_container.takeAt(0)
-                if item.widget():
-                    item.widget().deleteLater()
-                if item.layout():
-                    pass
+        self.fields_btn.setEnabled(False)
+        self.fields_status.setText("加载中...")
 
-            if fields:
-                row = QHBoxLayout()
-                self._field_checks = {}
-                for f in sorted(fields)[:30]:  # Limit display
-                    cb = QCheckBox(f[:50])
-                    cb.setToolTip(f)
-                    self._field_checks[f] = cb
-                    row.addWidget(cb)
-                row.addStretch()
-                self._fields_container.addLayout(row)
-                self.fields_status.setText(f"共 {len(fields)} 个字段 (显示前30)")
-            else:
-                self.fields_status.setText("无可用字段")
-        except Exception as e:
-            self.fields_status.setText(f"加载失败: {e}")
+        def _worker():
+            try:
+                fields = self.app.bridge.find_fields(".*")
+                self._fields_loaded.emit(fields)
+            except Exception:
+                self._fields_loaded.emit([])
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_fields_loaded(self, fields):
+        self.fields_btn.setEnabled(True)
+        # Clear old checkboxes
+        while self._fields_container.count():
+            item = self._fields_container.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            if item.layout():
+                pass
+
+        if fields:
+            row = QHBoxLayout()
+            self._field_checks = {}
+            for f in sorted(fields)[:30]:  # Limit display
+                cb = QCheckBox(f[:50])
+                cb.setToolTip(f)
+                self._field_checks[f] = cb
+                row.addWidget(cb)
+            row.addStretch()
+            self._fields_container.addLayout(row)
+            self.fields_status.setText(f"共 {len(fields)} 个字段 (显示前30)")
+        else:
+            self.fields_status.setText("无可用字段")
 
     def _get_selected_fields(self) -> list:
         checks = getattr(self, '_field_checks', {})
@@ -514,6 +527,8 @@ class ExportTab(QWidget):
     # ── Data extraction ──
 
     def _extract(self):
+        if self._is_extracting:
+            return
         if not self.app.bridge or not self.app.bridge.db_path:
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
@@ -547,8 +562,13 @@ class ExportTab(QWidget):
             QMessageBox.warning(self, "提示", "结束日期格式错误，请使用 YYYY-MM-DD")
             return
 
-        self.extract_info.setText("正在提取...")
+        self._is_extracting = True
         self.extract_btn.setEnabled(False)
+        self.extract_progress.set_indeterminate()
+        self.extract_progress.set_cancel_enabled(True)
+        db_total = getattr(self.app, 'db_total_records', '?')
+        self.extract_progress.update_detail(f"正在提取数据 ({db_total} 条记录)...")
+        self.extract_progress.cancelled.connect(self._cancel_extract)
 
         dedup = self.dedup_check.isChecked()
         filter_phase = FILTER_PHASES.get(self.phase_combo.currentText(), "")
@@ -583,7 +603,16 @@ class ExportTab(QWidget):
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _cancel_extract(self):
+        self.app.bridge.cancel()
+
     def _on_extract_complete(self, df):
+        self._is_extracting = False
+        self.extract_progress.finish(success=len(df) if df is not None else 0)
+        try:
+            self.extract_progress.cancelled.disconnect(self._cancel_extract)
+        except RuntimeError:
+            pass
         self.extract_btn.setEnabled(True)
         self.app.current_data = df
 
@@ -625,10 +654,16 @@ class ExportTab(QWidget):
         self.fda_match_btn.setEnabled(bool(ids))
         self.doc_fda_btn.setEnabled(False)
         self.doc_all_btn.setText("全部文档")
-        self.fda_status.setText("可开始匹配FDA审评资料" if ids else "请先提取数据")
-        self.fda_progress.setVisible(False)
+        self.fda_status_label.setText("可开始匹配FDA审评资料" if ids else "请先提取数据")
+        self.fda_progress.reset()
 
     def _on_extract_error(self, error_msg):
+        self._is_extracting = False
+        self.extract_progress.reset()
+        try:
+            self.extract_progress.cancelled.disconnect(self._cancel_extract)
+        except RuntimeError:
+            pass
         self.extract_btn.setEnabled(True)
         self.extract_info.setText("提取失败")
         QMessageBox.critical(self, "提取失败", error_msg)
@@ -792,10 +827,10 @@ class ExportTab(QWidget):
         self._enable_doc_buttons(False)
         self.doc_fda_btn.setEnabled(False)
         self.doc_cancel_btn.setEnabled(True)
-        self.doc_progress_bar.setMinimum(0)
-        self.doc_progress_bar.setMaximum(total)
-        self.doc_progress_bar.setValue(0)
-        self.doc_progress_bar.setVisible(True)
+        self.doc_progress.start(total)
+        self.doc_progress.set_cancel_enabled(True)
+        self.doc_progress.cancelled.connect(self._cancel_doc_download)
+        self._doc_start_time = time.time()
         self.doc_status.setText(f"正在下载文档 0/{total}...")
 
         def _worker():
@@ -816,14 +851,22 @@ class ExportTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_doc_progress(self, current, total, trial_id, status):
-        self.doc_progress_bar.setMaximum(total)
-        self.doc_progress_bar.setValue(current)
-        pct = int(current / total * 100) if total > 0 else 0
-        self.doc_status.setText(f"正在下载 {trial_id} ({pct}%)...")
+        self.doc_progress.update_progress(current, total, f"正在下载 {trial_id}")
+        if status == "start":
+            self.doc_progress.update_detail(f"{current}/{total} 试验")
+        elif status in ("ok", "error", "skip"):
+            # Calculate ETA
+            if current > 0 and self._doc_start_time:
+                elapsed = time.time() - self._doc_start_time
+                remaining = elapsed / current * (total - current)
+                self.doc_progress.update_eta(elapsed, remaining)
 
     def _on_doc_complete(self, result):
         self.doc_cancel_btn.setEnabled(False)
-        self.doc_progress_bar.setValue(self.doc_progress_bar.maximum())
+        try:
+            self.doc_progress.cancelled.disconnect(self._cancel_doc_download)
+        except RuntimeError:
+            pass
         self._enable_doc_buttons(True)
 
         success = result.get("success", [])
@@ -832,6 +875,8 @@ class ExportTab(QWidget):
         skipped = result.get("skipped", {})
         fail_count = len(failed) if isinstance(failed, dict) else 0
         skip_count = len(skipped) if isinstance(skipped, dict) else 0
+
+        self.doc_progress.finish(success=len(success), skipped=skip_count, failed=fail_count)
 
         self.doc_status.setText(
             f"完成: 成功 {len(success)}, 跳过 {skip_count}, 失败 {fail_count}"
@@ -847,7 +892,7 @@ class ExportTab(QWidget):
 
     def _on_doc_error(self, error_msg):
         self.doc_cancel_btn.setEnabled(False)
-        self.doc_progress_bar.setVisible(False)
+        self.doc_progress.reset()
         self._enable_doc_buttons(True)
         self.doc_status.setText("文档下载失败")
         QMessageBox.critical(self, "文档下载失败", error_msg)
@@ -859,7 +904,7 @@ class ExportTab(QWidget):
             self.app.bridge.cancel()
         self.doc_status.setText("已取消")
         self._enable_doc_buttons(True)
-        self.doc_progress_bar.setVisible(False)
+        self.doc_progress.reset()
 
     # ── CSV export ──
 
@@ -1065,11 +1110,8 @@ class ExportTab(QWidget):
         self._fda_drug_to_rows = drug_to_rows
         self._fda_cancelled = False
         self.fda_match_btn.setEnabled(False)
-        self.fda_progress.setVisible(True)
-        self.fda_progress.setMinimum(0)
-        self.fda_progress.setMaximum(len(drug_names))
-        self.fda_progress.setValue(0)
-        self.fda_status.setText(f"准备匹配 {len(drug_names)} 种药物...")
+        self.fda_progress.start(len(drug_names))
+        self.fda_status_label.setText(f"准备匹配 {len(drug_names)} 种药物...")
 
         def _worker():
             from service.fda_service import FdaMatchService
@@ -1087,26 +1129,27 @@ class ExportTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_fda_match_progress(self, current, total, drug_name):
-        self.fda_progress.setMaximum(total)
-        self.fda_progress.setValue(current)
-        self.fda_status.setText(f"正在匹配 {drug_name} ({current}/{total})...")
+        self.fda_progress.update_progress(current, total, f"匹配 {drug_name}")
 
     def _on_fda_match_complete(self, results):
         self._fda_match_results = results
         self._fda_match_done = True
         self.fda_match_btn.setEnabled(True)
-        self.fda_progress.setVisible(False)
 
         # Count matched rows
         matched_rows = set()
+        matched_count = 0
         for drug_name, result in results.items():
             if result.get("matched"):
+                matched_count += 1
                 for row_idx in self._fda_drug_to_rows.get(drug_name, []):
                     matched_rows.add(row_idx)
 
+        self.fda_progress.finish(success=matched_count)
+
         total_rows = len(self._full_df) if self._full_df is not None else 0
         matched_drugs = sum(1 for r in results.values() if r.get("matched"))
-        self.fda_status.setText(
+        self.fda_status_label.setText(
             f"匹配完成: {len(matched_rows)}/{total_rows} 条记录匹配到 "
             f"FDA审评资料（{matched_drugs}/{len(results)} 种药物）"
         )
@@ -1126,8 +1169,8 @@ class ExportTab(QWidget):
 
     def _on_fda_match_error(self, error_msg):
         self.fda_match_btn.setEnabled(True)
-        self.fda_progress.setVisible(False)
-        self.fda_status.setText(f"匹配失败")
+        self.fda_progress.reset()
+        self.fda_status_label.setText(f"匹配失败")
         QMessageBox.critical(self, "FDA匹配失败", error_msg)
 
     def _add_fda_column(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1187,10 +1230,9 @@ class ExportTab(QWidget):
         self._enable_doc_buttons(False)
         self.doc_fda_btn.setEnabled(False)
         self.doc_cancel_btn.setEnabled(True)
-        self.doc_progress_bar.setMinimum(0)
-        self.doc_progress_bar.setMaximum(100)
-        self.doc_progress_bar.setValue(0)
-        self.doc_progress_bar.setVisible(True)
+        self.doc_progress.start(100)
+        self.doc_progress.set_cancel_enabled(True)
+        self.doc_progress.cancelled.connect(self._cancel_doc_download)
         self.doc_status.setText("正在准备FDA审评资料下载...")
 
         def _worker():
@@ -1210,20 +1252,22 @@ class ExportTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_fda_doc_progress(self, current, total, filename):
-        self.doc_progress_bar.setMaximum(total)
-        self.doc_progress_bar.setValue(current)
-        pct = int(current / total * 100) if total > 0 else 0
-        self.doc_status.setText(f"FDA下载 {filename} ({pct}%)...")
+        self.doc_progress.update_progress(current, total, f"FDA下载 {filename}")
 
     def _on_fda_doc_complete(self, result):
         self.doc_cancel_btn.setEnabled(False)
-        self.doc_progress_bar.setValue(self.doc_progress_bar.maximum())
+        try:
+            self.doc_progress.cancelled.disconnect(self._cancel_doc_download)
+        except RuntimeError:
+            pass
         self._enable_doc_buttons(True)
         self.doc_fda_btn.setEnabled(True)
 
         success = result.get("success", [])
         failed = result.get("failed", {})
         fail_count = len(failed) if isinstance(failed, dict) else 0
+
+        self.doc_progress.finish(success=len(success), failed=fail_count)
 
         self.doc_status.setText(
             f"FDA审评资料下载完成: 成功 {len(success)}, 失败 {fail_count}"
@@ -1245,7 +1289,7 @@ class ExportTab(QWidget):
 
     def _on_fda_doc_error(self, error_msg):
         self.doc_cancel_btn.setEnabled(False)
-        self.doc_progress_bar.setVisible(False)
+        self.doc_progress.reset()
         self._enable_doc_buttons(True)
         self.doc_fda_btn.setEnabled(True)
         self.doc_status.setText("FDA审评资料下载失败")
