@@ -176,7 +176,7 @@ def run_r_streaming(
         stdout_lines = []
         start = time.time()
         last_activity = time.time()
-        poll_interval = 5
+        poll_interval = 0.5
 
         while True:
             try:
