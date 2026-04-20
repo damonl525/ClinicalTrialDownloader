@@ -860,12 +860,12 @@ class ExportTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_doc_progress(self, current, total, trial_id, status):
-        self.doc_progress.update_progress(current, total, f"正在下载 {trial_id}")
+        self.doc_progress.update_progress(current, total, f"正在下载 {trial_id} ({current}/{total})")
         if status == "start":
             self.doc_progress.update_detail(f"{current}/{total} 试验")
         elif status in ("ok", "error", "skip"):
-            # Calculate ETA
-            if current > 0 and self._doc_start_time:
+            # Calculate ETA (only after 3+ data points for stability)
+            if current >= 3 and self._doc_start_time:
                 elapsed = time.time() - self._doc_start_time
                 remaining = elapsed / current * (total - current)
                 self.doc_progress.update_eta(elapsed, remaining)
