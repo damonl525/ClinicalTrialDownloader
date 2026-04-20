@@ -61,14 +61,16 @@ class ProgressPanel(QWidget):
 
         layout.addLayout(status_row)
 
-        # Row 3: Detail line
+        # Row 3: Detail line (hidden when empty)
         self.detail = QLabel("")
         self.detail.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.detail.setVisible(False)
         layout.addWidget(self.detail)
 
-        # Row 4: Stats line
+        # Row 4: Stats line (hidden when empty)
         self.stats = QLabel("")
         self.stats.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.stats.setVisible(False)
         layout.addWidget(self.stats)
 
     # ── Existing methods (backward-compatible) ──
@@ -90,7 +92,9 @@ class ProgressPanel(QWidget):
 
     def finish(self, success: int, skipped: int = 0, failed: int = 0):
         """Mark operation as complete."""
-        self.bar.setValue(self.bar.maximum())
+        # Exit indeterminate mode (min=0,max=0) before setting value
+        self.bar.setMaximum(1)
+        self.bar.setValue(1)
         self.cancel_btn.setVisible(False)
         parts = [f"完成: {success}"]
         if skipped:
@@ -98,15 +102,20 @@ class ProgressPanel(QWidget):
         if failed:
             parts.append(f"失败: {failed}")
         self.stats.setText("  ".join(parts))
+        self.stats.setVisible(True)
         self.label.setText("")
+        self.detail.setVisible(False)
 
     def reset(self):
         """Reset to initial state."""
         self.bar.setVisible(False)
         self.bar.setValue(0)
+        self.bar.setMaximum(1)  # Reset from indeterminate mode
         self.label.setText("")
         self.stats.setText("")
+        self.stats.setVisible(False)
         self.detail.setText("")
+        self.detail.setVisible(False)
         self.cancel_btn.setVisible(False)
 
     def set_indeterminate(self):
@@ -123,10 +132,12 @@ class ProgressPanel(QWidget):
         elapsed = _format_duration(elapsed_seconds)
         remaining = _format_duration(estimated_remaining)
         self.stats.setText(f"已用时 {elapsed} | 预计剩余 {remaining}")
+        self.stats.setVisible(True)
 
     def update_detail(self, message: str):
         """Show a secondary detail line below the main label."""
         self.detail.setText(message)
+        self.detail.setVisible(bool(message))
 
     def set_cancel_enabled(self, enabled: bool):
         """Show or hide the cancel button independently."""
