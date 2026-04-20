@@ -74,6 +74,9 @@ class LogDialog(QDialog):
 
     def _connect_handler(self):
         """Connect the QtLogHandler signal to the log viewer."""
+        # Replay buffered history so user sees logs from before dialog was opened
+        for level, msg in self._handler.get_buffered():
+            self._log_viewer.append_log(level, msg)
         self._handler.log_message.connect(self._on_log_message)
 
     def _on_log_message(self, level: str, message: str):

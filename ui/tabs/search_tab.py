@@ -4,6 +4,7 @@
 Tab 2: Search & Download — three modes: form search, URL paste, trial ID lookup.
 """
 
+import logging
 import re
 import threading
 import webbrowser
@@ -17,7 +18,6 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from ui.theme import get_font, SPACING
-from ui.widgets.log_viewer import LogViewer
 from ui.widgets.progress import ProgressPanel
 from ui.widgets.card import CollapsibleCard
 from core.constants import (
@@ -25,6 +25,8 @@ from core.constants import (
     SUPPORTED_REGISTERS, LOG_MAX_LINES,
 )
 from service.download_service import DownloadService
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadResultDialog(QMessageBox):
@@ -209,15 +211,6 @@ class SearchTab(QWidget):
         action_layout.addWidget(self.progress_panel)
 
         layout.addWidget(action_card)
-
-        # ── Card: Log ──
-        log_card = self._make_card()
-        log_layout = QVBoxLayout(log_card)
-        log_layout.addWidget(QLabel("下载日志"))
-        self.log_viewer = LogViewer()
-        self.log_viewer.setMinimumHeight(120)
-        log_layout.addWidget(self.log_viewer)
-        layout.addWidget(log_card)
 
         layout.addStretch()
 
@@ -560,7 +553,7 @@ class SearchTab(QWidget):
 
         mode = self._current_mode()
         self._save_search_state(mode)
-        self.log_viewer.clear_log()
+        self.progress_panel.reset()
         self._set_downloading(True)
 
         if mode == "form":
@@ -688,11 +681,16 @@ class SearchTab(QWidget):
         self._log_signal.emit("info", msg)
 
     def _on_log_signal(self, level: str, msg: str):
-        """Handle log signal on GUI thread."""
+        """Handle log signal on GUI thread — forward to logging system."""
         try:
-            self.log_viewer.append_log(level, msg)
+            if level == "error":
+                logger.error(msg)
+            elif level == "warning":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
         except RuntimeError:
-            pass  # Widget destroyed during shutdown
+            pass
 
     # ── UI state ──
 
