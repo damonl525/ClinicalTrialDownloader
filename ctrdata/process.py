@@ -112,6 +112,9 @@ def run_r_json(bridge, r_code: str, timeout: int = 600) -> Any:
     return {"ok": True, "raw_output": output}
 
 
+_MAX_TIMEOUT_CONTINUES = 3  # Max times user can extend timeout before force-kill
+
+
 def run_r_streaming(
     bridge,
     r_code: str,
@@ -177,6 +180,7 @@ def run_r_streaming(
         start = time.time()
         last_activity = time.time()
         poll_interval = 0.5
+        continue_count = 0
 
         while True:
             try:
@@ -186,29 +190,34 @@ def run_r_streaming(
                     break
                 now = time.time()
                 if timeout and (now - start) > timeout:
-                    if on_timeout:
+                    choice = None
+                    if on_timeout and continue_count < _MAX_TIMEOUT_CONTINUES:
                         choice = on_timeout(int(now - start))
                         if choice == "continue":
-                            start = now  # Extend timeout
+                            start = now
+                            continue_count += 1
                             continue
                     proc.kill()
                     proc.wait(timeout=5)
+                    reason = "已达到最大续期次数" if continue_count >= _MAX_TIMEOUT_CONTINUES else ""
                     raise DownloadTimeoutError(
-                        f"R 执行超时（{timeout}秒）",
+                        f"R 执行超时（{timeout}秒）{reason}",
                         elapsed=int(now - start),
                         user_action=choice if on_timeout else "",
                     )
                 if stall_timeout and (now - last_activity) > stall_timeout:
-                    if on_timeout:
+                    choice = None
+                    if on_timeout and continue_count < _MAX_TIMEOUT_CONTINUES:
                         choice = on_timeout(int(now - start))
                         if choice == "continue":
-                            last_activity = now  # Extend stall timeout
+                            last_activity = now
+                            continue_count += 1
                             continue
                     proc.kill()
                     proc.wait(timeout=5)
                     raise DownloadTimeoutError(
-                        f"下载无响应超时（{stall_timeout}秒），部分文件下载已终止。\n"
-                        f"可重新点击下载按钮重新下载全部文件。",
+                        f"下载无响应超时（{stall_timeout}秒），已自动终止。\n"
+                        f"可重新点击下载按钮重新下载。",
                         elapsed=int(now - start),
                         user_action=choice if on_timeout else "",
                     )
@@ -222,10 +231,11 @@ def run_r_streaming(
                 callback(line)
             if timeout and (time.time() - start) > timeout:
                 _choice = None
-                if on_timeout:
+                if on_timeout and continue_count < _MAX_TIMEOUT_CONTINUES:
                     _choice = on_timeout(int(time.time() - start))
                     if _choice == "continue":
-                        start = time.time()  # Extend timeout
+                        start = time.time()
+                        continue_count += 1
                         # Don't raise — keep reading
                     else:
                         proc.kill()

@@ -199,15 +199,10 @@ class SearchTab(QWidget):
         self.update_btn.clicked.connect(self._update_last_query)
         btn_row.addWidget(self.update_btn)
 
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setObjectName("secondary")
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.clicked.connect(self._cancel)
-        btn_row.addWidget(self.cancel_btn)
-
         action_layout.addLayout(btn_row)
 
         self.progress_panel = ProgressPanel()
+        self.progress_panel.cancelled.connect(self._cancel)
         action_layout.addWidget(self.progress_panel)
 
         layout.addWidget(action_card)
@@ -697,7 +692,6 @@ class SearchTab(QWidget):
     def _set_downloading(self, busy: bool):
         self.is_downloading = busy
         self.search_btn.setEnabled(not busy)
-        self.cancel_btn.setEnabled(busy)
         self.browser_btn.setEnabled(not busy and self._current_mode() == "form")
         self.update_btn.setEnabled(not busy)
 
