@@ -208,20 +208,33 @@ class MainWindow(QMainWindow):
 
     def _build_tabs(self):
         self.tabs = QTabWidget()
-        self.tabs.addTab(DatabaseTab(self), "数据库")
-        self.tabs.addTab(SearchTab(self), "搜索与下载")
-        self.tabs.addTab(ExportTab(self), "提取与导出")
+        self.db_tab = DatabaseTab(self)
+        self.search_tab = SearchTab(self)
+        self.export_tab = ExportTab(self)
+        self.tabs.addTab(self.db_tab, "数据库")
+        self.tabs.addTab(self.search_tab, "搜索与下载")
+        self.tabs.addTab(self.export_tab, "提取与导出")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
+
+        # Auto-extract after search download
+        self.search_tab.download_finished.connect(self._on_search_download_finished)
 
     # ── Status bar ──
 
     def _on_tab_changed(self, index: int):
         """Refresh scope counts when switching to export tab."""
         if index == 2:  # Export tab
-            export_tab = self.tabs.widget(2)
-            if hasattr(export_tab, 'refresh_scope_counts'):
-                export_tab.refresh_scope_counts()
+            if hasattr(self.export_tab, 'refresh_scope_counts'):
+                self.export_tab.refresh_scope_counts()
+
+    def _on_search_download_finished(self, result):
+        """Auto-navigate to ExportTab and trigger extraction after download."""
+        success_ids = result.get("success", [])
+        if not success_ids:
+            return
+        self.tabs.setCurrentIndex(2)
+        self.export_tab.auto_extract(success_ids)
 
     def _build_status_bar(self):
         self.status = self.statusBar()
@@ -298,7 +311,7 @@ class MainWindow(QMainWindow):
             self._show_env_dialog(info)
 
         # Update DatabaseTab env indicator
-        db_tab = self.tabs.widget(0) if hasattr(self, "tabs") else None
+        db_tab = self.db_tab if hasattr(self, "db_tab") else None
         if db_tab and hasattr(db_tab, "_update_env_indicator"):
             db_tab._update_env_indicator()
 

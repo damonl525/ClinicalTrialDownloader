@@ -606,6 +606,15 @@ class ExportTab(QWidget):
     def _cancel_extract(self):
         self.app.bridge.cancel()
 
+    def auto_extract(self, search_ids: list):
+        """Auto-trigger extraction after search download (called by MainWindow)."""
+        if self._is_extracting:
+            return
+        # Set scope to current search results
+        self.scope_current_rb.setChecked(True)
+        # Trigger extract with current settings
+        self._extract()
+
     def _on_extract_complete(self, df):
         self._is_extracting = False
         self.extract_progress.finish(success=len(df) if df is not None else 0)
