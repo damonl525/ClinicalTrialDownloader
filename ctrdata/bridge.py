@@ -178,106 +178,11 @@ class CtrdataBridge:
         per_trial_timeout: int = 180,
         callback: Callable = None,
     ) -> Dict[str, Any]:
-        """
-        为指定的 trial ID 列表下载文档。
-
-        Through a Python-side loop calling ctrLoadQueryIntoDb(queryterm=trial_id)
-        per trial. Supports global timeout, per-trial timeout skip, resume,
-        and progress callbacks.
-        """
-        if not self.db_path:
-            raise DatabaseError("请先连接数据库")
-        if not trial_ids:
-            return {"ok": True, "success": [], "failed": {}, "skipped": {}, "total": 0}
-
-        # Ensure documents directory exists
-        os.makedirs(documents_path, exist_ok=True)
-
-        # Resume file
-        resume_file = self._get_resume_file(documents_path)
-        resume_data = self._load_resume(resume_file)
-
-        # Session isolation: if trial_ids differ from last session, clear resume
-        current_session = self._session_hash(trial_ids)
-        if resume_data.get("session") and resume_data["session"] != current_session:
-            self._cleanup_resume(resume_file)
-            resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
-
-        # Filter already completed and explicitly skipped IDs
-        already_done = set(resume_data.get("completed", []))
-        skipped_explicit = set(resume_data.get("skipped_explicitly", []))
-        remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
-
-        if not remaining:
-            # All IDs were already completed in this session
-            requested_set = set(str(tid) for tid in trial_ids)
-            return {
-                "ok": True,
-                "success": [tid for tid in already_done if tid in requested_set],
-                "failed": {},
-                "skipped": {},
-                "total": len(trial_ids),
-            }
-
-        total_to_process = len(remaining)
-        runtime_completed = list(already_done)
-        runtime_failed = dict(resume_data.get("failed", {}))
-        runtime_skipped_explicit = list(resume_data.get("skipped_explicitly", []))
-
-        for i, tid in enumerate(remaining, 1):
-            if callback:
-                callback(i, total_to_process, tid, "start", None)
-
-            try:
-                result = self._download_one_trial_doc(
-                    tid, documents_path, documents_regexp, per_trial_timeout
-                )
-                if result.get("ok"):
-                    runtime_completed.append(tid)
-                    if callback:
-                        callback(i, total_to_process, tid, "ok", None)
-                else:
-                    err = result.get("error", "unknown")
-                    runtime_failed[tid] = err
-                    if callback:
-                        callback(i, total_to_process, tid, "error", err)
-
-            except CtrdataError as e:
-                # Stall timeout — skip this trial, continue with next
-                err_msg = f"TIMEOUT({per_trial_timeout}s): {e}"
-                runtime_failed[tid] = err_msg
-                if callback:
-                    callback(i, total_to_process, tid, "skip", err_msg)
-
-            self._save_resume(
-                resume_file,
-                runtime_completed,
-                runtime_failed,
-                len(trial_ids),
-                skipped_explicitly=runtime_skipped_explicit,
-                session=current_session,
-            )
-
-        # Separate skipped (timeout) from failed
-        skipped = {}
-        failed = {}
-        for tid, err in runtime_failed.items():
-            if "TIMEOUT" in str(err):
-                skipped[tid] = err
-            else:
-                failed[tid] = err
-
-        # Cleanup resume if all succeeded
-        if not failed and not skipped:
-            self._cleanup_resume(resume_file)
-
-        return {
-            "ok": True,
-            "success": list(runtime_completed),
-            "failed": failed,
-            "skipped": skipped,
-            "total": len(trial_ids),
-        }
+        """为指定的 trial ID 列表下载文档 (uses batch R session)."""
+        return _docs.download_documents_batch(
+            self, trial_ids, documents_path, documents_regexp,
+            timeout_total, per_trial_timeout, callback,
+        )
 
     def _get_resume_file(self, documents_path: str) -> str:
         """Get the checkpoint file path for a documents directory."""

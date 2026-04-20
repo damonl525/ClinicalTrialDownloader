@@ -308,6 +308,90 @@ def download_one_trial_doc(
 
 
 # ============================================================
+# Batch document download (single R session)
+# ============================================================
+
+def download_batch_docs(
+    bridge,
+    trial_ids: list,
+    documents_path: str,
+    documents_regexp: str,
+    total_timeout: int = 7200,
+    per_trial_timeout: int = 180,
+    progress_callback: Callable = None,
+) -> list:
+    """Download documents for multiple trials in a single R session.
+
+    Args:
+        bridge: CtrdataBridge instance
+        trial_ids: List of trial IDs to download
+        documents_path: Directory to save documents
+        documents_regexp: Optional regex filter for document types
+        total_timeout: Maximum total execution time in seconds
+        per_trial_timeout: Not used for batch (total_timeout governs)
+        progress_callback: Called with (i, total, tid, status, error) for each PROGRESS line
+
+    Returns:
+        List of result dicts from R, one per trial.
+    """
+    import json as _json
+
+    db = _r_escape(bridge.db_path)
+    col = _r_escape(bridge.collection)
+    dp = _r_escape(documents_path)
+    doc_re = (
+        f', documents.regexp = "{_r_escape(documents_regexp)}"'
+        if documents_regexp else ""
+    )
+    # Escape single quotes in JSON for embedding in R string
+    trial_ids_json = _json.dumps(trial_ids).replace("'", "\\'")
+
+    r_code = _render(
+        "download_batch_docs",
+        db=db,
+        col=col,
+        trial_ids_json=trial_ids_json,
+        dp=dp,
+        doc_re=doc_re,
+    )
+
+    def _line_callback(line):
+        if line.startswith("PROGRESS\t"):
+            parts = line.split("\t")
+            if len(parts) >= 5:
+                try:
+                    i = int(parts[1])
+                    total = int(parts[2])
+                    tid = parts[3]
+                    status = parts[4]
+                    error = parts[5] if len(parts) > 5 else ""
+                    if progress_callback:
+                        progress_callback(i, total, tid, status, error)
+                except (ValueError, IndexError):
+                    pass
+
+    proc = run_r_streaming(
+        bridge,
+        r_code,
+        callback=_line_callback,
+        timeout=total_timeout,
+    )
+
+    # Parse final JSON array from output
+    output = proc.stdout.strip()
+    for line in reversed(output.split("\n")):
+        line = line.strip()
+        if line.startswith("["):
+            try:
+                return _json.loads(line)
+            except _json.JSONDecodeError:
+                pass
+            break
+
+    return [{"ok": False, "error": "No batch results from R"}]
+
+
+# ============================================================
 # Temp file cleanup
 # ============================================================
 
