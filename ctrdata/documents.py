@@ -200,6 +200,95 @@ def download_documents_for_ids(
 
 
 # ============================================================
+# Batch document download with single R session + resume
+# ============================================================
+
+def download_documents_batch(
+    bridge,
+    trial_ids: list,
+    documents_path: str,
+    documents_regexp: str = None,
+    timeout_total: int = 7200,
+    per_trial_timeout: int = 180,
+    callback: Callable = None,
+) -> dict:
+    """Download documents using a single R batch session with resume support."""
+    if not bridge.db_path:
+        raise DatabaseError("请先连接数据库")
+    if not trial_ids:
+        return {"ok": True, "success": [], "failed": {}, "skipped": {}, "total": 0}
+
+    os.makedirs(documents_path, exist_ok=True)
+
+    resume_file = _get_resume_file(bridge, documents_path)
+    resume_data = _load_resume(bridge, resume_file)
+
+    current_session = _session_hash(trial_ids)
+    if resume_data.get("session") and resume_data["session"] != current_session:
+        _cleanup_resume(bridge, resume_file)
+        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+
+    already_done = set(resume_data.get("completed", []))
+    skipped_explicit = set(resume_data.get("skipped_explicitly", []))
+    remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
+
+    if not remaining:
+        requested_set = set(str(tid) for tid in trial_ids)
+        return {
+            "ok": True,
+            "success": [tid for tid in already_done if tid in requested_set],
+            "failed": {},
+            "skipped": {},
+            "total": len(trial_ids),
+        }
+
+    runtime_completed = list(already_done)
+
+    def _on_progress(i, total, tid, status, error):
+        if callback:
+            callback(i, total, tid, status, error)
+        # Update resume after each successful trial
+        if status == "ok" and tid not in runtime_completed:
+            runtime_completed.append(tid)
+            _save_resume(
+                bridge, resume_file, runtime_completed,
+                resume_data.get("failed", {}), len(trial_ids),
+                skipped_explicitly=list(skipped_explicit),
+                session=current_session,
+            )
+
+    from ctrdata.process import download_batch_docs as _batch
+    results = _batch(
+        bridge, remaining, documents_path, documents_regexp,
+        total_timeout=timeout_total,
+        progress_callback=_on_progress,
+    )
+
+    # Aggregate results
+    success = list(runtime_completed)
+    failed = {}
+    for r in results:
+        tid = r.get("trial_id", "")
+        if r.get("ok"):
+            if tid not in success:
+                success.append(tid)
+        else:
+            err = r.get("error", "unknown")
+            failed[tid] = err
+
+    if not failed:
+        _cleanup_resume(bridge, resume_file)
+
+    return {
+        "ok": True,
+        "success": success,
+        "failed": failed,
+        "skipped": {},
+        "total": len(trial_ids),
+    }
+
+
+# ============================================================
 # Resume control
 # ============================================================
 

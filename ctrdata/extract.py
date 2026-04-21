@@ -171,7 +171,20 @@ def extract_to_dataframe(
     )
 
     try:
-        result = _proc.run_r_json(bridge, r_code)
+        # Use run_r_streaming so bridge.cancel() can kill the R process
+        proc = _proc.run_r_streaming(bridge, r_code)
+
+        import json as _json
+        output = proc.stdout.strip()
+        result = {}
+        for line in reversed(output.split("\n")):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    result = _json.loads(line)
+                except _json.JSONDecodeError:
+                    pass
+                break
 
         if os.path.exists(tmp_csv):
             df = pd.read_csv(tmp_csv, encoding="utf-8-sig", low_memory=False)

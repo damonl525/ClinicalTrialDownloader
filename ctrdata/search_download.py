@@ -81,7 +81,11 @@ def _load_single_url(
     )
 
     if callback:
-        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout, on_timeout=on_timeout)
+        proc = _proc.run_r_streaming(
+            bridge, r_code, callback=callback,
+            timeout=timeout, stall_timeout=timeout,
+            on_timeout=on_timeout,
+        )
         output = proc.stdout.strip()
         for line in reversed(output.split("\n")):
             line = line.strip()
@@ -160,7 +164,11 @@ def _load_multi_url(
     )
 
     if callback:
-        proc = _proc.run_r_streaming(bridge, r_code, callback=callback, timeout=timeout, on_timeout=on_timeout)
+        proc = _proc.run_r_streaming(
+            bridge, r_code, callback=callback,
+            timeout=timeout, stall_timeout=timeout,
+            on_timeout=on_timeout,
+        )
         output = proc.stdout.strip()
         for line in reversed(output.split("\n")):
             line = line.strip()

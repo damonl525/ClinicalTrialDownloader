@@ -4,26 +4,29 @@
 Tab 2: Search & Download — three modes: form search, URL paste, trial ID lookup.
 """
 
+import logging
 import re
 import threading
 import webbrowser
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QCheckBox, QFrame, QProgressBar,
+    QPushButton, QComboBox, QCheckBox, QFrame,
     QSizePolicy, QTabWidget, QMessageBox, QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 
 from ui.theme import get_font, SPACING
-from ui.widgets.log_viewer import LogViewer
+from ui.widgets.progress import ProgressPanel
 from ui.widgets.card import CollapsibleCard
 from core.constants import (
     SEARCH_PHASES, SEARCH_RECRUITMENT, SEARCH_POPULATIONS,
     SUPPORTED_REGISTERS, LOG_MAX_LINES,
 )
 from service.download_service import DownloadService
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadResultDialog(QMessageBox):
@@ -119,6 +122,7 @@ class SearchTab(QWidget):
     _log_signal = Signal(str, str)  # level, message
     _progress_update = Signal(int, int, str)  # current, total, message
     _timeout_request = Signal(dict)  # ctx dict with event + choice
+    download_finished = Signal(dict)   # Emitted after download result dialog closes
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -131,7 +135,7 @@ class SearchTab(QWidget):
         # Connect signals
         self._download_complete.connect(self._on_complete)
         self._download_error.connect(self._on_error)
-        self._status_msg.connect(lambda msg: self._status_label.setText(msg))
+        self._status_msg.connect(lambda msg: self.progress_panel.update_detail(msg))
         self._log_signal.connect(self._on_log_signal)
         self._progress_update.connect(self._on_progress_update)
         self._timeout_request.connect(self._on_timeout_request)
@@ -195,33 +199,13 @@ class SearchTab(QWidget):
         self.update_btn.clicked.connect(self._update_last_query)
         btn_row.addWidget(self.update_btn)
 
-        self.cancel_btn = QPushButton("取消")
-        self.cancel_btn.setObjectName("secondary")
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.clicked.connect(self._cancel)
-        btn_row.addWidget(self.cancel_btn)
-
         action_layout.addLayout(btn_row)
 
-        self._status_label = QLabel("")
-        self._status_label.setStyleSheet("color: #3B82F6;")
-        action_layout.addWidget(self._status_label)
-
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        action_layout.addWidget(self.progress_bar)
+        self.progress_panel = ProgressPanel()
+        self.progress_panel.cancelled.connect(self._cancel)
+        action_layout.addWidget(self.progress_panel)
 
         layout.addWidget(action_card)
-
-        # ── Card: Log ──
-        log_card = self._make_card()
-        log_layout = QVBoxLayout(log_card)
-        log_layout.addWidget(QLabel("下载日志"))
-        self.log_viewer = LogViewer()
-        self.log_viewer.setMinimumHeight(120)
-        log_layout.addWidget(self.log_viewer)
-        layout.addWidget(log_card)
 
         layout.addStretch()
 
@@ -505,7 +489,7 @@ class SearchTab(QWidget):
         if text:
             from PySide6.QtWidgets import QApplication
             QApplication.clipboard().setText(text)
-            self._status_label.setText(f"已复制到剪贴板")
+            self.progress_panel.update_detail(f"已复制到剪贴板")
 
     # ── Update last query ──
 
@@ -513,7 +497,7 @@ class SearchTab(QWidget):
         if not self.app.bridge or not self.app.bridge.db_path:
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
-        self._status_label.setText("正在更新上次查询...")
+        self.progress_panel.update_detail("正在更新上次查询...")
 
         def _worker():
             svc = self._get_dl_service()
@@ -537,7 +521,7 @@ class SearchTab(QWidget):
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
 
-        self._status_label.setText(f"正在查找 {intervention} 的同义词...")
+        self.progress_panel.update_detail(f"正在查找 {intervention} 的同义词...")
 
         def _worker():
             svc = self._get_dl_service()
@@ -564,7 +548,7 @@ class SearchTab(QWidget):
 
         mode = self._current_mode()
         self._save_search_state(mode)
-        self.log_viewer.clear_log()
+        self.progress_panel.reset()
         self._set_downloading(True)
 
         if mode == "form":
@@ -692,31 +676,32 @@ class SearchTab(QWidget):
         self._log_signal.emit("info", msg)
 
     def _on_log_signal(self, level: str, msg: str):
-        """Handle log signal on GUI thread."""
+        """Handle log signal on GUI thread — forward to logging system."""
         try:
-            self.log_viewer.append_log(level, msg)
+            if level == "error":
+                logger.error(msg)
+            elif level == "warning":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
         except RuntimeError:
-            pass  # Widget destroyed during shutdown
+            pass
 
     # ── UI state ──
 
-    def _set_downloading(self, downloading: bool):
-        self.is_downloading = downloading
-        self.search_btn.setEnabled(not downloading)
-        self.cancel_btn.setEnabled(downloading)
-        self.browser_btn.setEnabled(not downloading and self._current_mode() == "form")
-        self.update_btn.setEnabled(not downloading)
+    def _set_downloading(self, busy: bool):
+        self.is_downloading = busy
+        self.search_btn.setEnabled(not busy)
+        self.browser_btn.setEnabled(not busy and self._current_mode() == "form")
+        self.update_btn.setEnabled(not busy)
 
-        if downloading:
-            self._status_label.setText("正在下载...")
-            self.progress_bar.setMinimum(0)
-            self.progress_bar.setMaximum(1)
-            self.progress_bar.setValue(0)
-            self.progress_bar.setVisible(True)
+        if busy:
+            self.progress_panel.start(1)
+            self.progress_panel.update_progress(0, 1, "准备下载...")
             self.app.filtered_ids = []
             self.app.current_search_ids = None
         else:
-            self.progress_bar.setVisible(False)
+            self.progress_panel.reset()
 
     def _on_complete(self, result):
         self._set_downloading(False)
@@ -724,7 +709,7 @@ class SearchTab(QWidget):
         s = result.get("success", [])
         if not isinstance(s, list): s = [s] if s else []
 
-        self._status_label.setText(f"完成: 下载 {n} 条记录, {len(s)} 个试验")
+        self.progress_panel.update_detail(f"完成: 下载 {n} 条记录, {len(s)} 个试验")
         self.app.status.showMessage(f"数据下载完成: {n} 条记录")
         self.app.update_db_status()
 
@@ -736,25 +721,25 @@ class SearchTab(QWidget):
         dlg = DownloadResultDialog(result, self)
         dlg.exec()
 
+        self.download_finished.emit(result)
+
     def _on_error(self, error_msg):
         self._set_downloading(False)
-        self._status_label.setText("下载失败")
+        self.progress_panel.update_detail("下载失败")
         QMessageBox.critical(self, "下载失败", error_msg)
 
     def _on_progress_update(self, current, total, message):
-        """Update progress bar and status label (thread-safe via signal)."""
-        self.progress_bar.setMaximum(max(total, 1))
-        self.progress_bar.setValue(current)
-        self._status_label.setText(message)
+        """Update progress panel (thread-safe via signal)."""
+        self.progress_panel.update_progress(current, total, message)
 
     def _cancel(self):
-        self._status_label.setText("正在取消...")
+        self.progress_panel.update_detail("正在取消...")
         self._log("用户取消了操作")
         if self.app.bridge:
             self.app.bridge.cancel()
         self.app.current_search_ids = None
         self._set_downloading(False)
-        self._status_label.setText("已取消")
+        self.progress_panel.update_detail("已取消")
 
     # ── Search state persistence ──
 
