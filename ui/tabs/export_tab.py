@@ -435,12 +435,6 @@ class ExportTab(QWidget):
         self.doc_all_btn.setEnabled(False)
         doc_btn_row.addWidget(self.doc_all_btn)
 
-        self.doc_cancel_btn = QPushButton("取消")
-        self.doc_cancel_btn.setObjectName("secondary")
-        self.doc_cancel_btn.setEnabled(False)
-        self.doc_cancel_btn.clicked.connect(self._cancel_doc_download)
-        doc_btn_row.addWidget(self.doc_cancel_btn)
-
         doc_layout.addLayout(doc_btn_row)
 
         self.doc_progress = ProgressPanel()
@@ -826,6 +820,47 @@ class ExportTab(QWidget):
             QMessageBox.critical(self, "错误", "请指定文档保存路径")
             return
 
+        # Check for interrupted download (resume support)
+        from ctrdata.documents import _get_resume_file, _load_resume, _session_hash, _cleanup_resume
+        resume_file = _get_resume_file(self.app.bridge, docs_path)
+        resume_data = _load_resume(self.app.bridge, resume_file)
+        current_session = _session_hash(filtered_ids)
+
+        resume_info = None
+        if resume_data.get("session") and resume_data["session"] == current_session:
+            done_count = len(resume_data.get("completed", []))
+            if done_count > 0 and done_count < len(filtered_ids):
+                resume_info = (done_count, len(filtered_ids), resume_file)
+
+        # Confirmation dialog
+        doc_type_label = {
+            "prot": "Protocol",
+            "sap_|statist": "SAP/统计分析",
+            "prot|sap_|statist": "Protocol + SAP",
+        }.get(doc_regexp, "全部文档")
+
+        if resume_info:
+            done, total_ids, rf = resume_info
+            remaining = total_ids - done
+            msg = (
+                f"检测到上次未完成的下载：已完成 {done}/{total_ids}，剩余 {remaining} 条。\n\n"
+                f"点击 \"Yes\" 继续下载剩余 {remaining} 条{doc_type_label}\n"
+                f"点击 \"No\" 重新下载全部 {total_ids} 条\n\n"
+                f"保存到: {docs_path}"
+            )
+            reply = QMessageBox.question(self, "继续下载", msg)
+            if reply == QMessageBox.Yes:
+                pass  # Continue — bridge will auto-resume
+            else:
+                _cleanup_resume(self.app.bridge, rf)
+        else:
+            msg = (
+                f"即将为 {len(filtered_ids)} 条试验下载{doc_type_label}。\n"
+                f"保存到: {docs_path}\n\n确认开始下载？"
+            )
+            if QMessageBox.question(self, "确认下载", msg) != QMessageBox.Yes:
+                return
+
         self._last_docs_regexp = doc_regexp
         total = len(filtered_ids)
 
@@ -835,12 +870,14 @@ class ExportTab(QWidget):
 
         self._enable_doc_buttons(False)
         self.doc_fda_btn.setEnabled(False)
-        self.doc_cancel_btn.setEnabled(True)
         self.doc_progress.start(total)
         self.doc_progress.set_cancel_enabled(True)
         self.doc_progress.cancelled.connect(self._cancel_doc_download)
         self._doc_start_time = time.time()
         self.doc_status.setText(f"正在下载文档 0/{total}...")
+
+        from ui.app import get_settings
+        per_trial_timeout = int(get_settings().value("doc/timeout", 120))
 
         def _worker():
             svc = ExtractService(self.app.bridge)
@@ -849,7 +886,7 @@ class ExportTab(QWidget):
                     trial_ids=filtered_ids,
                     documents_path=docs_path,
                     documents_regexp=doc_regexp,
-                    per_trial_timeout=120,
+                    per_trial_timeout=per_trial_timeout,
                     on_progress=lambda c, t, tid, s, err=None:
                         self._doc_progress.emit(c, t, tid, s),
                 )
@@ -871,7 +908,6 @@ class ExportTab(QWidget):
                 self.doc_progress.update_eta(elapsed, remaining)
 
     def _on_doc_complete(self, result):
-        self.doc_cancel_btn.setEnabled(False)
         try:
             self.doc_progress.cancelled.disconnect(self._cancel_doc_download)
         except RuntimeError:
@@ -900,14 +936,13 @@ class ExportTab(QWidget):
             self._download_fda_docs()
 
     def _on_doc_error(self, error_msg):
-        self.doc_cancel_btn.setEnabled(False)
         self.doc_progress.reset()
         self._enable_doc_buttons(True)
         self.doc_status.setText("文档下载失败")
         QMessageBox.critical(self, "文档下载失败", error_msg)
 
     def _cancel_doc_download(self):
-        self.doc_cancel_btn.setEnabled(False)
+        self.doc_progress.set_cancel_enabled(False)
         self.doc_status.setText("正在取消...")
         if self.app.bridge:
             self.app.bridge.cancel()
@@ -1238,7 +1273,6 @@ class ExportTab(QWidget):
         # Disable buttons during download
         self._enable_doc_buttons(False)
         self.doc_fda_btn.setEnabled(False)
-        self.doc_cancel_btn.setEnabled(True)
         self.doc_progress.start(100)
         self.doc_progress.set_cancel_enabled(True)
         self.doc_progress.cancelled.connect(self._cancel_doc_download)
@@ -1264,7 +1298,6 @@ class ExportTab(QWidget):
         self.doc_progress.update_progress(current, total, f"FDA下载 {filename}")
 
     def _on_fda_doc_complete(self, result):
-        self.doc_cancel_btn.setEnabled(False)
         try:
             self.doc_progress.cancelled.disconnect(self._cancel_doc_download)
         except RuntimeError:
@@ -1297,7 +1330,6 @@ class ExportTab(QWidget):
             msg.exec()
 
     def _on_fda_doc_error(self, error_msg):
-        self.doc_cancel_btn.setEnabled(False)
         self.doc_progress.reset()
         self._enable_doc_buttons(True)
         self.doc_fda_btn.setEnabled(True)

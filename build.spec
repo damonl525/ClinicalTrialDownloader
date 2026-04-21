@@ -8,7 +8,6 @@ a = Analysis(
     datas=[
         ('D:/Liangjianlin/project/Personal AI Project/Clinicaltrial docs downloader/v0.3 new/ctrdata/templates', 'ctrdata/templates'),
         ('D:/Liangjianlin/project/Personal AI Project/Clinicaltrial docs downloader/v0.3 new/assets', 'assets'),
-        ('D:/Liangjianlin/project/Personal AI Project/Clinicaltrial docs downloader/v0.3 new/CHANGELOG.md', '.'),
     ],
     hiddenimports=[
         'PySide6.QtWidgets', 'PySide6.QtCore', 'PySide6.QtGui',
