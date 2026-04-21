@@ -113,7 +113,7 @@ class ConfigManager:
             "window_size": [950, 720],
             "advanced_expanded": True,
         },
-        "version": "1.0.1",
+        "version": "1.2.0",
         "last_modified": None,
     }
 

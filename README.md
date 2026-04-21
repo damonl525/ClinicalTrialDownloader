@@ -158,6 +158,37 @@ python build.py --release  # Release mode (full deps)
 | Database | SQLite + nodbi | Lightweight storage |
 | Tests | pytest | Unit test suite |
 
+## Changelog
+
+### v1.2.0 (2026-04-21) -- UX Efficiency Overhaul
+- **ProgressPanel**: Unified progress widget with ETA, detail line, cancel support across all tabs
+- **Seamless pipeline**: Auto-navigate to Export tab + auto-extract after search download
+- **Batch document download**: Single R session for N trials, eliminates per-trial cold-start overhead
+- **Streaming latency**: R output poll interval reduced from 5s to 0.5s
+- **Resume UI**: Detects interrupted downloads and prompts user to continue or restart
+- **Timeout setting**: Per-trial doc timeout now reads from Settings (was hardcoded)
+- **Download confirmation**: Mandatory confirmation dialog before any document download
+- **Fix**: Duplicate cancel buttons in SearchTab and ExportTab
+- **Fix**: Extraction progress bar keeps spinning after completion
+- **Fix**: Extracted data loss from list-type columns
+
+### v1.1.0 -- Document Download & Polish
+- Document download with resume/checkpoint support
+- FDA review document matching and download
+- Runtime log viewer
+- Settings dialog (theme, paths, timeout)
+- Table context menu (copy cell, row, selection, export selected)
+- Collapsible card layout
+
+### v1.0.0 -- Initial Release
+- PySide6 GUI with three-tab workflow (Database, Search, Export)
+- Multi-register support (CTGOV2, EUCTR, ISRCTN, CTIS)
+- Smart search with multi-condition form, URL paste, trial ID download
+- Post-download filtering (phase, status, date, condition, intervention)
+- CSV export
+- Dark/Light/System theme
+- R environment auto-detection
+
 ## License
 
 MIT License. See [LICENSE](LICENSE).
