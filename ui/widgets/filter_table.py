@@ -8,21 +8,15 @@ Features:
 - Clicking filterable column headers shows a dropdown with unique values
 - Uses custom QSortFilterProxyModel subclass for filtering
 - get_row_data() returns dict mapping column names to values
+- context_menu_requested signal for right-click actions
 """
+
+import webbrowser
 
 from PySide6.QtWidgets import (
     QTableView,
     QHeaderView,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
-    QStyle,
     QMenu,
-    QCheckBox,
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QSizePolicy,
 )
 from PySide6.QtCore import (
     Qt,
@@ -60,7 +54,9 @@ class _TableModel(QAbstractTableModel):
             if row < len(self._data):
                 return str(self._data[row][col - 1])
         if role == Qt.CheckStateRole and col == 0:
-            return Qt.Checked if self._checks[row] else Qt.Unchecked
+            if row < len(self._checks):
+                return Qt.Checked if self._checks[row] else Qt.Unchecked
+            return Qt.Unchecked
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
@@ -111,6 +107,7 @@ class FilterTableView(QTableView):
     """QTableView with header filter dropdowns and checkbox selection."""
 
     checked_changed = Signal()
+    context_menu_requested = Signal(int, QPoint)  # source_row, global_pos
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -124,6 +121,8 @@ class FilterTableView(QTableView):
         self.setSelectionBehavior(QTableView.SelectRows)
         self.horizontalHeader().setStretchLastSection(True)
         self.setAlternatingRowColors(True)
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
 
         # Header click for filter
         self.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
@@ -134,18 +133,15 @@ class FilterTableView(QTableView):
         data: list,
         filterable: list = None,
     ):
-        """Load data into the table.
-
-        Args:
-            columns: Column name list (checkbox column added automatically)
-            data: List of row lists
-            filterable: Column indices (0-based, excluding checkbox) that get filter dropdowns
-        """
+        """Load data into the table."""
         self._columns = columns
         self._source_model = _TableModel(columns, data, self)
         self._proxy_model.setSourceModel(self._source_model)
         self._proxy_model.set_column_filters({})
         self._filterable_columns = set(filterable or range(len(columns)))
+
+        # Set checkbox column width
+        self.setColumnWidth(0, 40)
 
     # -- Row count helpers --
 
@@ -155,7 +151,20 @@ class FilterTableView(QTableView):
     def visible_row_count(self) -> int:
         return self._proxy_model.rowCount()
 
-    # -- Checkbox operations --
+    # -- Checkbox: explicit click handling for reliability --
+
+    def mouseReleaseEvent(self, event):
+        """Handle checkbox clicks on column 0 explicitly."""
+        if event.button() == Qt.LeftButton and self._source_model:
+            index = self.indexAt(event.pos())
+            if index.isValid() and index.column() == 0:
+                source_idx = self._proxy_model.mapToSource(index)
+                current = self._source_model.data(source_idx, Qt.CheckStateRole)
+                new_state = Qt.Unchecked if current == Qt.Checked else Qt.Checked
+                self._source_model.setData(source_idx, new_state, Qt.CheckStateRole)
+                self.checked_changed.emit()
+                return
+        super().mouseReleaseEvent(event)
 
     def check_all(self):
         if not self._source_model:
@@ -218,7 +227,6 @@ class FilterTableView(QTableView):
 
     def set_column_filter(self, col_index: int, allowed: list):
         """Filter column (0-based data column) to only show these values."""
-        # col_index is data column; in proxy it's col_index+1 (checkbox offset)
         proxy_col = col_index + 1
         current = dict(self._proxy_model._column_filters)
         current[proxy_col] = set(str(v) for v in allowed)
@@ -230,7 +238,7 @@ class FilterTableView(QTableView):
         current.pop(proxy_col, None)
         self._proxy_model.set_column_filters(current)
 
-    # -- Header click -> filter dropdown --
+    # -- Header click -> filter menu --
 
     def _on_header_clicked(self, logical_index: int):
         if logical_index == 0:  # checkbox column
@@ -243,41 +251,53 @@ class FilterTableView(QTableView):
         if not values:
             return
 
-        menu = QMenu(self)
-        menu.setWindowTitle("筛选")
-
         current_filters = self._proxy_model._column_filters
         current_allowed = current_filters.get(logical_index, set(values))
-        checkboxes = []
 
+        menu = QMenu(self)
+        menu.setSeparatorsCollapsible(False)
+
+        # Add checkable actions for each unique value
+        val_actions = []
         for val in values:
-            cb = QCheckBox(val)
-            cb.setChecked(val in current_allowed)
-            menu.addWidget(cb)
-            checkboxes.append((val, cb))
+            action = QAction(val, self)
+            action.setCheckable(True)
+            action.setChecked(val in current_allowed)
+            menu.addAction(action)
+            val_actions.append((val, action))
 
-        # Select All / Deselect All buttons
-        btn_widget = QWidget()
-        btn_row = QHBoxLayout()
-        btn_widget.setLayout(btn_row)
-        select_all_btn = QPushButton("全选")
-        deselect_all_btn = QPushButton("取消全选")
-        btn_row.addWidget(select_all_btn)
-        btn_row.addWidget(deselect_all_btn)
+        # Apply filter immediately when action toggled
+        def _apply_filter():
+            allowed = set(v for v, a in val_actions if a.isChecked())
+            cur = dict(self._proxy_model._column_filters)
+            if allowed == set(values):
+                cur.pop(logical_index, None)
+            else:
+                cur[logical_index] = allowed
+            self._proxy_model.set_column_filters(cur)
+
+        for _, action in val_actions:
+            action.toggled.connect(lambda checked, _f=_apply_filter: _f())
+
+        # Select all / Deselect all
+        menu.addSeparator()
+        select_all = QAction("全选", self)
+        deselect_all = QAction("取消全选", self)
 
         def _select_all():
-            for _, cb in checkboxes:
-                cb.setChecked(True)
+            for _, a in val_actions:
+                a.setChecked(True)
 
         def _deselect_all():
-            for _, cb in checkboxes:
-                cb.setChecked(False)
+            for _, a in val_actions:
+                a.setChecked(False)
 
-        select_all_btn.clicked.connect(_select_all)
-        deselect_all_btn.clicked.connect(_deselect_all)
-        menu.addWidget(btn_widget)
+        select_all.triggered.connect(_select_all)
+        deselect_all.triggered.connect(_deselect_all)
+        menu.addAction(select_all)
+        menu.addAction(deselect_all)
 
-        # Show menu and apply
+        # Position below header section
         header = self.horizontalHeader()
         x = header.sectionViewportPosition(logical_index)
         y = header.height()
@@ -285,16 +305,14 @@ class FilterTableView(QTableView):
 
         menu.exec(pos)
 
-        # Menu closed — apply current checkbox states
-        allowed = set()
-        for val, cb in checkboxes:
-            if cb.isChecked():
-                allowed.add(val)
-        if allowed == set(values):
-            current = dict(self._proxy_model._column_filters)
-            current.pop(logical_index, None)
-            self._proxy_model.set_column_filters(current)
-        else:
-            current = dict(self._proxy_model._column_filters)
-            current[logical_index] = allowed
-            self._proxy_model.set_column_filters(current)
+    # -- Context menu (right-click) --
+
+    def _on_context_menu(self, pos: QPoint):
+        """Handle right-click context menu."""
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return
+        source_idx = self._proxy_model.mapToSource(index)
+        source_row = source_idx.row()
+        global_pos = self.viewport().mapToGlobal(pos)
+        self.context_menu_requested.emit(source_row, global_pos)

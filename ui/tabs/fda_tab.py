@@ -8,6 +8,7 @@ No dependency on database, CtrdataBridge, or trial data.
 import logging
 import os
 import threading
+import webbrowser
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QFileDialog,
     QDateEdit,
+    QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QDate
 
@@ -72,6 +74,9 @@ class FdaTab(QWidget):
         self._download_progress.connect(self._on_download_progress)
         self._download_complete.connect(self._on_download_complete)
         self._download_error.connect(self._on_download_error)
+
+        # Right-click context menu on table
+        self.table.context_menu_requested.connect(self._on_table_context_menu)
 
     # ================================================================
     # Search area
@@ -510,3 +515,32 @@ class FdaTab(QWidget):
 
     def _cancel_download(self):
         self._cancel_flag = True
+
+    # ================================================================
+    # Right-click context menu
+    # ================================================================
+
+    def _on_table_context_menu(self, source_row: int, global_pos):
+        """Show context menu for right-clicked row."""
+        if source_row >= len(self._all_rows):
+            return
+
+        row_data = self._all_rows[source_row]
+        url = row_data.get("doc_url", "")
+
+        menu = QMenu(self)
+
+        # Open in browser
+        open_action = menu.addAction("在浏览器中打开")
+        open_action.setEnabled(bool(url))
+
+        # Check/uncheck row
+        is_checked = source_row in self.table.checked_rows()
+        toggle_text = "取消勾选" if is_checked else "勾选此行"
+        toggle_action = menu.addAction(toggle_text)
+
+        chosen = menu.exec(global_pos)
+        if chosen == open_action and url:
+            webbrowser.open(url)
+        elif chosen == toggle_action:
+            self.table.set_check_state(source_row, not is_checked)
