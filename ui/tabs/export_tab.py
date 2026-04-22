@@ -253,21 +253,13 @@ class ExportTab(QWidget):
         f_row2 = QHBoxLayout()
         f_row2.setSpacing(SPACING["sm"])
         f_row2.addWidget(QLabel("开始日期:"))
-        self.date_start_input = QDateEdit()
-        self.date_start_input.setCalendarPopup(True)
-        self.date_start_input.setDisplayFormat("yyyy-MM-dd")
-        self.date_start_input.setSpecialValueText(" ")
-        self.date_start_input.setDate(QDate())
-        self.date_start_input.setFixedSize(120, 30)
+        self.date_start_input, clear_ds = self._make_date_edit()
         f_row2.addWidget(self.date_start_input)
+        f_row2.addWidget(clear_ds)
         f_row2.addWidget(QLabel("~"))
-        self.date_end_input = QDateEdit()
-        self.date_end_input.setCalendarPopup(True)
-        self.date_end_input.setDisplayFormat("yyyy-MM-dd")
-        self.date_end_input.setSpecialValueText(" ")
-        self.date_end_input.setDate(QDate())
-        self.date_end_input.setFixedSize(120, 30)
+        self.date_end_input, clear_de = self._make_date_edit()
         f_row2.addWidget(self.date_end_input)
+        f_row2.addWidget(clear_de)
         f_row2.addSpacing(20)
         f_row2.addWidget(QLabel("适应症:"))
         self.condition_input = QLineEdit()
@@ -419,6 +411,25 @@ class ExportTab(QWidget):
         self._on_scope_change()
 
     # ── Scope ──
+
+    @staticmethod
+    def _make_date_edit():
+        """Create QDateEdit with calendar popup and clear button."""
+        _EMPTY = QDate(2000, 1, 1)
+        de = QDateEdit()
+        de.setCalendarPopup(True)
+        de.setDisplayFormat("yyyy-MM-dd")
+        de.setMinimumDate(_EMPTY)
+        de.setSpecialValueText(" ")
+        de.setDate(_EMPTY)
+        de.setFixedSize(120, 30)
+
+        clear = QPushButton("\u00d7")
+        clear.setFixedSize(22, 22)
+        clear.setToolTip("清除日期")
+        clear.clicked.connect(lambda: de.setDate(_EMPTY))
+
+        return de, clear
 
     def _on_scope_change(self):
         self.refresh_scope_counts()

@@ -76,6 +76,29 @@ class FdaTab(QWidget):
     # Search area
     # ================================================================
 
+    @staticmethod
+    def _make_date_edit():
+        """Create QDateEdit with calendar popup and clear button.
+
+        Uses minimum date (2000-01-01) as 'empty' sentinel.
+        specialValueText makes it display blank when at minimum.
+        """
+        _EMPTY = QDate(2000, 1, 1)
+        de = QDateEdit()
+        de.setCalendarPopup(True)
+        de.setDisplayFormat("yyyy-MM-dd")
+        de.setMinimumDate(_EMPTY)
+        de.setSpecialValueText(" ")
+        de.setDate(_EMPTY)
+        de.setFixedSize(120, 30)
+
+        clear = QPushButton("\u00d7")
+        clear.setFixedSize(22, 22)
+        clear.setToolTip("清除日期")
+        clear.clicked.connect(lambda: de.setDate(_EMPTY))
+
+        return de, clear
+
     def _build_search_area(self, parent_layout):
         # Main search row
         search_row = QHBoxLayout()
@@ -88,22 +111,14 @@ class FdaTab(QWidget):
         search_row.addWidget(self.drug_input, stretch=2)
 
         search_row.addWidget(QLabel("日期从:"))
-        self.date_from = QDateEdit()
-        self.date_from.setCalendarPopup(True)
-        self.date_from.setDisplayFormat("yyyy-MM-dd")
-        self.date_from.setSpecialValueText(" ")
-        self.date_from.setDate(QDate())
-        self.date_from.setFixedSize(120, 30)
+        self.date_from, clear_from = self._make_date_edit()
         search_row.addWidget(self.date_from)
+        search_row.addWidget(clear_from)
 
         search_row.addWidget(QLabel("到:"))
-        self.date_to = QDateEdit()
-        self.date_to.setCalendarPopup(True)
-        self.date_to.setDisplayFormat("yyyy-MM-dd")
-        self.date_to.setSpecialValueText(" ")
-        self.date_to.setDate(QDate())
-        self.date_to.setFixedSize(120, 30)
+        self.date_to, clear_to = self._make_date_edit()
         search_row.addWidget(self.date_to)
+        search_row.addWidget(clear_to)
 
         self.search_btn = QPushButton("搜索")
         self.search_btn.setObjectName("primary")
@@ -387,8 +402,8 @@ class FdaTab(QWidget):
 
     def _do_reset(self):
         self.drug_input.clear()
-        self.date_from.setDate(QDate())
-        self.date_to.setDate(QDate())
+        self.date_from.setDate(QDate(2000, 1, 1))
+        self.date_to.setDate(QDate(2000, 1, 1))
         self.manufacturer_input.clear()
         self.pharm_class_input.clear()
         self.route_combo.setCurrentIndex(0)

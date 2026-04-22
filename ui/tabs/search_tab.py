@@ -272,21 +272,13 @@ class SearchTab(QWidget):
         adv_row2 = QHBoxLayout()
         adv_row2.setSpacing(SPACING["sm"])
         adv_row2.addWidget(QLabel("开始日期从:"))
-        self.start_after_input = QDateEdit()
-        self.start_after_input.setCalendarPopup(True)
-        self.start_after_input.setDisplayFormat("yyyy-MM-dd")
-        self.start_after_input.setSpecialValueText(" ")
-        self.start_after_input.setDate(QDate())
-        self.start_after_input.setFixedSize(120, 30)
+        self.start_after_input, clear_sa = self._make_date_edit()
         adv_row2.addWidget(self.start_after_input)
+        adv_row2.addWidget(clear_sa)
         adv_row2.addWidget(QLabel("到:"))
-        self.start_before_input = QDateEdit()
-        self.start_before_input.setCalendarPopup(True)
-        self.start_before_input.setDisplayFormat("yyyy-MM-dd")
-        self.start_before_input.setSpecialValueText(" ")
-        self.start_before_input.setDate(QDate())
-        self.start_before_input.setFixedSize(120, 30)
+        self.start_before_input, clear_sb = self._make_date_edit()
         adv_row2.addWidget(self.start_before_input)
+        adv_row2.addWidget(clear_sb)
         adv_row2.addWidget(QLabel("EUCTR为注册日期"))
         adv_row2.addStretch()
         adv_layout.addLayout(adv_row2)
@@ -295,21 +287,13 @@ class SearchTab(QWidget):
         adv_row3 = QHBoxLayout()
         adv_row3.setSpacing(SPACING["sm"])
         adv_row3.addWidget(QLabel("完成日期从:"))
-        self.completed_after_input = QDateEdit()
-        self.completed_after_input.setCalendarPopup(True)
-        self.completed_after_input.setDisplayFormat("yyyy-MM-dd")
-        self.completed_after_input.setSpecialValueText(" ")
-        self.completed_after_input.setDate(QDate())
-        self.completed_after_input.setFixedSize(120, 30)
+        self.completed_after_input, clear_ca = self._make_date_edit()
         adv_row3.addWidget(self.completed_after_input)
+        adv_row3.addWidget(clear_ca)
         adv_row3.addWidget(QLabel("到:"))
-        self.completed_before_input = QDateEdit()
-        self.completed_before_input.setCalendarPopup(True)
-        self.completed_before_input.setDisplayFormat("yyyy-MM-dd")
-        self.completed_before_input.setSpecialValueText(" ")
-        self.completed_before_input.setDate(QDate())
-        self.completed_before_input.setFixedSize(120, 30)
+        self.completed_before_input, clear_cb = self._make_date_edit()
         adv_row3.addWidget(self.completed_before_input)
+        adv_row3.addWidget(clear_cb)
         adv_row3.addStretch()
         adv_layout.addLayout(adv_row3)
 
@@ -398,6 +382,25 @@ class SearchTab(QWidget):
 
     # ── Mode change ──
 
+    @staticmethod
+    def _make_date_edit():
+        """Create QDateEdit with calendar popup and clear button."""
+        _EMPTY = QDate(2000, 1, 1)
+        de = QDateEdit()
+        de.setCalendarPopup(True)
+        de.setDisplayFormat("yyyy-MM-dd")
+        de.setMinimumDate(_EMPTY)
+        de.setSpecialValueText(" ")
+        de.setDate(_EMPTY)
+        de.setFixedSize(120, 30)
+
+        clear = QPushButton("\u00d7")
+        clear.setFixedSize(22, 22)
+        clear.setToolTip("清除日期")
+        clear.clicked.connect(lambda: de.setDate(_EMPTY))
+
+        return de, clear
+
     def _on_mode_changed(self, index):
         mode = self._current_mode()
         if hasattr(self, 'browser_btn'):
@@ -420,10 +423,10 @@ class SearchTab(QWidget):
         """Restore QDateEdit from saved text value."""
         if text and len(text) == 10:
             d = QDate.fromString(text, "yyyy-MM-dd")
-            if d.isValid():
+            if d.isValid() and d.year() > 2000:
                 date_edit.setDate(d)
                 return
-        date_edit.setDate(QDate())
+        date_edit.setDate(QDate(2000, 1, 1))
 
     def _collect_form_params(self) -> dict:
         return {
