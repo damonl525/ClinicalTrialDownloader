@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FDA review document matching and download via openFDA API.
+FDA review document search and download via openFDA API.
 
-Pure Python service — no R dependency. Uses requests to query the
-openFDA drugsfda endpoint and download review PDFs.
+Direct search mode — no trial data dependency.
+Uses requests to query the openFDA drugsfda endpoint,
+flatten results into table rows, and download review PDFs.
 """
 
 import logging
@@ -14,13 +15,17 @@ from typing import Callable, Dict, List, Optional
 
 import requests
 
-from core.constants import FDA_API_BASE, FDA_API_RATE_LIMIT, FDA_REVIEW_DOC_TYPES
+from core.constants import (
+    FDA_API_BASE,
+    FDA_API_RATE_LIMIT,
+    FDA_REVIEW_DOC_TYPES,
+)
 
 logger = logging.getLogger(__name__)
 
 
-class FdaMatchService:
-    """Matches drug names against openFDA drugsfda endpoint."""
+class FdaSearchService:
+    """Direct search against openFDA drugsfda endpoint."""
 
     def __init__(self, api_key: str = None):
         self.api_key = api_key
@@ -28,6 +33,7 @@ class FdaMatchService:
         self._session.headers.update({"Accept": "application/json"})
         self._min_interval = FDA_API_RATE_LIMIT if not api_key else 0.06
         self._last_call_time = 0.0
+        self._cancel_flag = False
 
     # ------------------------------------------------------------------
     # Rate limiting
@@ -40,185 +46,218 @@ class FdaMatchService:
         self._last_call_time = time.time()
 
     # ------------------------------------------------------------------
-    # Drug name matching
+    # Search — build params and query
     # ------------------------------------------------------------------
 
-    def match_drug_names(
-        self,
-        drug_names: List[str],
-        on_progress: Callable[[int, int, str], None] = None,
-        is_cancelled: Callable[[], bool] = None,
-    ) -> Dict[str, dict]:
-        """Match unique drug names against openFDA API.
+    def _build_search_params(self, params: dict) -> dict:
+        """Build openFDA API query parameters from UI search params.
 
-        Returns dict mapping drug_name_lower -> match result dict.
-        Each result has: {"matched": bool, "review_docs": [...], ...}
+        UI params dict keys:
+            drug_name, date_from, date_to, manufacturer, route,
+            application_type, review_priority, submission_class
         """
-        results = {}
-        total = len(drug_names)
+        search_parts = []
+        query_params = {"limit": "100"}
 
-        for i, drug_name in enumerate(drug_names):
-            if is_cancelled and is_cancelled():
-                break
+        # Drug name: search generic_name OR brand_name
+        drug_name = params.get("drug_name", "").strip()
+        if drug_name:
+            search_parts.append(
+                f"(openfda.generic_name:{drug_name}+openfda.brand_name:{drug_name})"
+            )
 
-            self._rate_limit()
+        # Date range: single-sided supported
+        date_from = params.get("date_from", "").strip()
+        date_to = params.get("date_to", "").strip()
+        if date_from or date_to:
+            # Convert YYYY-MM-DD to YYYYMMDD
+            from_val = date_from.replace("-", "") if date_from else "*"
+            to_val = date_to.replace("-", "") if date_to else "*"
+            search_parts.append(
+                f"submissions.submission_status_date:[{from_val}+TO+{to_val}]"
+            )
 
-            try:
-                result = self._query_openfda(drug_name)
-                results[drug_name] = result
-            except Exception as e:
-                results[drug_name] = {"matched": False, "reason": str(e)}
+        # Advanced filters
+        manufacturer = params.get("manufacturer", "").strip()
+        if manufacturer:
+            search_parts.append(f"openfda.manufacturer_name:{manufacturer}")
 
-            if on_progress:
-                on_progress(i + 1, total, drug_name)
+        route = params.get("route", "").strip()
+        if route:
+            search_parts.append(f"openfda.route:{route}")
 
-        return results
+        app_type = params.get("application_type", "").strip()
+        if app_type:
+            search_parts.append(f"openfda.application_number:{app_type}*")
 
-    def _query_openfda(self, drug_name: str) -> dict:
-        """Query openFDA for a single drug name. Returns match result."""
-        params = {"limit": "10"}
+        review_priority = params.get("review_priority", "").strip()
+        if review_priority:
+            search_parts.append(f"submissions.review_priority:{review_priority}")
 
-        # Try generic_name first, then brand_name
-        for search_field in ["openfda.generic_name", "openfda.brand_name"]:
-            params["search"] = f"{search_field}:{drug_name}"
-            if self.api_key:
-                params["api_key"] = self.api_key
+        submission_class = params.get("submission_class", "").strip()
+        if submission_class:
+            search_parts.append(
+                f"submissions.submission_class_code:{submission_class}"
+            )
 
-            try:
-                resp = self._session.get(
-                    FDA_API_BASE, params=params, timeout=15
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    review_docs = self._extract_review_urls(data)
-                    if review_docs:
-                        # Collect metadata
-                        results = data.get("results", [])
-                        brand_names = set()
-                        generic_names = set()
-                        app_numbers = []
-                        for r in results:
-                            ofda = r.get("openfda", {})
-                            brand_names.update(ofda.get("brand_name", []))
-                            generic_names.update(ofda.get("generic_name", []))
-                            an = r.get("application_number", "")
-                            if an:
-                                app_numbers.append(an)
+        if search_parts:
+            query_params["search"] = "+".join(search_parts)
 
-                        return {
-                            "matched": True,
-                            "review_docs": review_docs,
-                            "brand_names": sorted(brand_names),
-                            "generic_names": sorted(generic_names),
-                            "application_numbers": app_numbers,
-                        }
-                elif resp.status_code == 404:
-                    continue  # Not found, try next field
-                else:
-                    logger.warning(
-                        "openFDA returned %d for %s", resp.status_code, drug_name
-                    )
-            except requests.RequestException as e:
-                logger.warning("openFDA request failed for %s: %s", drug_name, e)
+        if self.api_key:
+            query_params["api_key"] = self.api_key
 
-        return {"matched": False, "reason": "未在FDA数据库中找到"}
+        return query_params
 
-    def _extract_review_urls(self, api_response: dict) -> List[dict]:
-        """Extract review document URLs from openFDA response.
+    def search(
+        self,
+        params: dict,
+        skip: int = 0,
+        on_cancel: Callable[[], bool] = None,
+    ) -> dict:
+        """Search openFDA. Returns {rows: [...], total: N}.
+
+        Each row is a flat dict with denormalized fields for table display.
+        """
+        self._cancel_flag = False
+        query_params = self._build_search_params(params)
+        query_params["skip"] = str(skip)
+
+        self._rate_limit()
+
+        try:
+            resp = self._session.get(
+                FDA_API_BASE, params=query_params, timeout=30
+            )
+            if resp.status_code == 404:
+                return {"rows": [], "total": 0}
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            logger.error("openFDA search failed: %s", e)
+            raise
+
+        total = data.get("meta", {}).get("results", {}).get("total", 0)
+        results = data.get("results", [])
+        rows = self._flatten_results(results)
+
+        return {"rows": rows, "total": total}
+
+    # ------------------------------------------------------------------
+    # Result flattening
+    # ------------------------------------------------------------------
+
+    def _flatten_results(self, results: list) -> List[dict]:
+        """Flatten nested API response into one row per review document.
 
         Walks: results[].submissions[].application_docs[]
-        Filters for review document types defined in FDA_REVIEW_DOC_TYPES.
+        Only includes documents whose type matches FDA_REVIEW_DOC_TYPES or "Review".
         """
-        docs = []
-        results = api_response.get("results", [])
-        review_type_keywords = [k.lower() for k in FDA_REVIEW_DOC_TYPES]
+        rows = []
+        review_keywords = [k.lower() for k in FDA_REVIEW_DOC_TYPES]
 
         for result in results:
-            submissions = result.get("submissions", [])
-            for submission in submissions:
-                app_docs = submission.get("application_docs", [])
+            openfda = result.get("openfda", {})
+            brand_names = openfda.get("brand_name", [])
+            generic_names = openfda.get("generic_name", [])
+            app_numbers = openfda.get("application_number", [])
+            manufacturers = openfda.get("manufacturer_name", [])
+
+            brand_name = brand_names[0] if brand_names else ""
+            generic_name = generic_names[0] if generic_names else ""
+            app_number = result.get("application_number", app_numbers[0] if app_numbers else "")
+            manufacturer = manufacturers[0] if manufacturers else ""
+
+            for submission in result.get("submissions", []):
                 sub_type = submission.get("submission_type", "")
-                sub_status = submission.get("submission_status", "")
                 sub_date = submission.get("submission_status_date", "")
 
-                for doc in app_docs:
+                for doc in submission.get("application_docs", []):
                     doc_type = doc.get("type", "")
-                    url = doc.get("url", "")
-
-                    if not url:
+                    doc_url = doc.get("url", "")
+                    if not doc_url:
                         continue
 
-                    # Include review docs and summary reviews
+                    # Only include review documents
                     doc_type_lower = doc_type.lower()
-                    is_review = any(
-                        kw in doc_type_lower for kw in review_type_keywords
-                    )
-                    # Also include the general "Review" type (links to TOC page)
+                    is_review = any(kw in doc_type_lower for kw in review_keywords)
                     is_review = is_review or doc_type == "Review"
+                    if not is_review:
+                        continue
 
-                    if is_review:
-                        docs.append({
-                            "url": url,
-                            "doc_type": doc_type,
-                            "submission_type": sub_type,
-                            "submission_status": sub_status,
-                            "submission_date": sub_date,
-                        })
+                    rows.append({
+                        "brand_name": brand_name,
+                        "generic_name": generic_name,
+                        "application_number": app_number,
+                        "manufacturer_name": manufacturer,
+                        "submission_type": sub_type,
+                        "submission_status_date": sub_date,
+                        "doc_type": doc_type,
+                        "doc_url": doc_url,
+                    })
 
-        return docs
+        return rows
 
     # ------------------------------------------------------------------
-    # PDF download
+    # Download
     # ------------------------------------------------------------------
 
-    def download_review_docs(
+    def download_docs(
         self,
-        matched_results: Dict[str, dict],
+        docs: List[dict],
         save_dir: str,
         on_progress: Callable[[int, int, str], None] = None,
         is_cancelled: Callable[[], bool] = None,
     ) -> dict:
-        """Download all matched FDA review PDFs.
+        """Download review documents.
 
-        Saves to {save_dir}/{drug_name}/ subdirectories.
-        Returns {"success": [filepaths], "failed": {url: error}}.
+        Args:
+            docs: List of row dicts (must have doc_url, brand_name, etc.)
+            save_dir: Target directory (flat, no subdirectories)
+            on_progress: Called with (current, total, filename)
+            is_cancelled: Checked before each download
+
+        Returns:
+            {"success": [filepaths], "failed": [{url, error, filename}]}
         """
         os.makedirs(save_dir, exist_ok=True)
         success = []
-        failed = {}
+        failed = []
+        total = len(docs)
 
-        # Collect all downloadable docs (exclude TOC pages)
-        all_docs = []
-        for drug_name, result in matched_results.items():
-            if not result.get("matched") or not result.get("review_docs"):
-                continue
-            for doc in result["review_docs"]:
-                url = doc.get("url", "")
-                if not url:
-                    continue
-                # Skip HTML/CFM TOC pages — only download PDFs
-                if url.lower().endswith((".html", ".cfm")):
-                    continue
-                all_docs.append((drug_name, doc))
-
-        total = len(all_docs)
-
-        for i, (drug_name, doc) in enumerate(all_docs):
+        for i, doc in enumerate(docs):
             if is_cancelled and is_cancelled():
                 break
 
-            url = doc.get("url", "")
-            doc_type = doc.get("doc_type", "review")
-            sub_date = doc.get("submission_date", "")
+            url = doc.get("doc_url", "")
+
+            # Skip HTML TOC pages
+            if url.lower().endswith((".html", ".cfm")):
+                failed.append({
+                    "url": url,
+                    "filename": "",
+                    "error": "HTML TOC page, not direct PDF",
+                })
+                continue
+
+            filename = _make_download_filename(
+                brand_name=doc.get("brand_name", ""),
+                submission_type=doc.get("submission_type", ""),
+                date=doc.get("submission_status_date", ""),
+                doc_type=doc.get("doc_type", ""),
+            )
+            filepath = os.path.join(save_dir, filename)
+
+            # Avoid name collision
+            if os.path.exists(filepath):
+                base, ext = os.path.splitext(filepath)
+                n = 2
+                while os.path.exists(f"{base}({n}){ext}"):
+                    n += 1
+                filepath = f"{base}({n}){ext}"
 
             try:
-                drug_dir = os.path.join(save_dir, _safe_dirname(drug_name))
-                os.makedirs(drug_dir, exist_ok=True)
-
-                filename = _make_filename(doc_type, sub_date)
-                filepath = os.path.join(drug_dir, filename)
-
                 if not os.path.exists(filepath):
+                    self._rate_limit()
                     resp = self._session.get(url, timeout=120, stream=True)
                     resp.raise_for_status()
                     tmp_path = filepath + ".tmp"
@@ -228,12 +267,15 @@ class FdaMatchService:
                     os.replace(tmp_path, filepath)
 
                 success.append(filepath)
-
             except Exception as e:
-                failed[url] = str(e)
+                failed.append({
+                    "url": url,
+                    "filename": filename,
+                    "error": str(e),
+                })
 
             if on_progress:
-                on_progress(i + 1, total, drug_name)
+                on_progress(i + 1, total, filename)
 
         return {"success": success, "failed": failed}
 
@@ -242,19 +284,19 @@ class FdaMatchService:
 # Helpers
 # ------------------------------------------------------------------
 
-def _safe_dirname(drug_name: str) -> str:
-    """Make a filesystem-safe directory name from a drug name."""
-    return drug_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
+def _make_download_filename(
+    brand_name: str,
+    submission_type: str,
+    date: str,
+    doc_type: str,
+) -> str:
+    """Generate filename: {brand_name}_{submission_type}_{date}_{doc_type_cn}.pdf"""
+    # Chinese abbreviation for doc type
+    cn_type = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type.replace(" ", "_"))
+    # Sanitize for filesystem
+    cn_type = cn_type.replace("/", "_").replace("\\", "_")
 
+    prefix = brand_name if brand_name else cn_type
+    prefix = prefix.replace("/", "_").replace("\\", "_").replace(" ", "_")
 
-def _make_filename(doc_type: str, date_str: str) -> str:
-    """Generate a descriptive PDF filename from doc type and date."""
-    safe_type = doc_type.replace(" ", "_").replace("(", "").replace(")", "")
-    if date_str:
-        # date_str is YYYYMMDD, format as YYYY-MM-DD
-        if len(date_str) == 8 and date_str.isdigit():
-            date_fmt = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-        else:
-            date_fmt = date_str
-        return f"{safe_type}_{date_fmt}.pdf"
-    return f"{safe_type}.pdf"
+    return f"{prefix}_{submission_type}_{date}_{cn_type}.pdf"
