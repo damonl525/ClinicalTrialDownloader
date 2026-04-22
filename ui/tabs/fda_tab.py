@@ -305,8 +305,16 @@ class FdaTab(QWidget):
         rows = result.get("rows", [])
         self._current_total = result.get("total", 0)
 
-        if not rows:
+        if not rows and self._current_total == 0:
             self.result_label.setText("未找到结果")
+            self.table.set_data([], [])
+            self._all_rows = []
+            return
+        elif not rows:
+            self.result_label.setText("当前页无审评文档结果")
+            self.table.set_data([], [])
+            self._all_rows = []
+            self._update_page_label()
             return
 
         # Map to table data
@@ -362,6 +370,7 @@ class FdaTab(QWidget):
     def _fetch_page(self):
         self.search_btn.setEnabled(False)
         self.result_label.setText("正在加载...")
+        self.table.uncheck_all()  # Clear selections from previous page
 
         def _worker():
             try:

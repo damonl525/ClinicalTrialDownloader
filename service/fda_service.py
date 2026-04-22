@@ -86,6 +86,10 @@ class FdaSearchService:
         if route:
             search_parts.append(f"openfda.route:{route}")
 
+        pharm_class = params.get("pharm_class", "").strip()
+        if pharm_class:
+            search_parts.append(f"openfda.pharm_class_epc:{pharm_class}")
+
         app_type = params.get("application_type", "").strip()
         if app_type:
             search_parts.append(f"openfda.application_number:{app_type}*")
@@ -220,6 +224,15 @@ class FdaSearchService:
             {"success": [filepaths], "failed": [{url, error, filename}]}
         """
         os.makedirs(save_dir, exist_ok=True)
+
+        # Clean stale .tmp files from previous interrupted runs
+        import glob
+        for tmp_file in glob.glob(os.path.join(save_dir, "*.tmp")):
+            try:
+                os.remove(tmp_file)
+            except OSError:
+                pass
+
         success = []
         failed = []
         total = len(docs)
@@ -291,12 +304,15 @@ def _make_download_filename(
     doc_type: str,
 ) -> str:
     """Generate filename: {brand_name}_{submission_type}_{date}_{doc_type_cn}.pdf"""
+    import re
     # Chinese abbreviation for doc type
     cn_type = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type.replace(" ", "_"))
     # Sanitize for filesystem
     cn_type = cn_type.replace("/", "_").replace("\\", "_")
+    cn_type = re.sub(r'[:*?"<>|]', '', cn_type)
 
     prefix = brand_name if brand_name else cn_type
     prefix = prefix.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    prefix = re.sub(r'[:*?"<>|]', '', prefix)
 
     return f"{prefix}_{submission_type}_{date}_{cn_type}.pdf"
