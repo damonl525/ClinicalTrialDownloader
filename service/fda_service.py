@@ -112,6 +112,23 @@ class FdaSearchService:
 
         return query_params
 
+    def _build_url(self, query_params: dict, skip: int) -> str:
+        """Build full URL manually to preserve + signs in search query.
+
+        requests.get(params=) encodes + as %2B, which breaks openFDA's
+        Lucene parser. Manual URL construction keeps + literal.
+        """
+        from urllib.parse import quote
+        parts = []
+        for key, val in query_params.items():
+            if key == "search":
+                # Don't encode + — it's the Lucene AND operator
+                parts.append(f"search={val}")
+            else:
+                parts.append(f"{key}={quote(str(val), safe='')}")
+        parts.append(f"skip={skip}")
+        return f"{FDA_API_BASE}?{'&'.join(parts)}"
+
     def search(
         self,
         params: dict,
@@ -124,14 +141,12 @@ class FdaSearchService:
         """
         self._cancel_flag = False
         query_params = self._build_search_params(params)
-        query_params["skip"] = str(skip)
+        url = self._build_url(query_params, skip)
 
         self._rate_limit()
 
         try:
-            resp = self._session.get(
-                FDA_API_BASE, params=query_params, timeout=30
-            )
+            resp = self._session.get(url, timeout=30)
             if resp.status_code == 404:
                 return {"rows": [], "total": 0}
             resp.raise_for_status()
