@@ -201,3 +201,37 @@ R_ERROR_TRANSLATIONS = [
     (r"timeout", "操作超时，网络响应过慢，请稍后重试"),
     (r"Permission denied", "权限不足，无法写入目标路径"),
 ]
+
+# ================================================================
+# FDA Tab — search parameter dropdown options
+# ================================================================
+FDA_APPLICATION_TYPES = {
+    "全部": "",
+    "NDA (新药申请)": "NDA",
+    "BLA (生物制品许可)": "BLA",
+    "ANDA (简略新药申请)": "ANDA",
+}
+
+FDA_SEARCH_ROUTES = {
+    "全部": "",
+    "口服 (oral)": "oral",
+    "注射 (intravenous)": "intravenous",
+    "局部 (topical)": "topical",
+    "吸入 (inhalation)": "inhalation",
+    "皮下 (subcutaneous)": "subcutaneous",
+    "肌肉 (intramuscular)": "intramuscular",
+}
+
+FDA_REVIEW_PRIORITIES = {
+    "全部": "",
+    "标准 (Standard)": "Standard",
+    "优先 (Priority)": "Priority",
+}
+
+FDA_SUBMISSION_CLASSES = {
+    "全部": "",
+    "原创新药 (N)": "N",
+    "补充申请 (S)": "S",
+    "有效性补充 (SE)": "SE",
+    "制造补充 (SL)": "SL",
+}
