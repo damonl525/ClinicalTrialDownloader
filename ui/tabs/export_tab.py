@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QCheckBox, QFrame, QFileDialog,
     QSizePolicy, QComboBox, QHeaderView, QMessageBox, QMenu,
-    QScrollArea,
+    QScrollArea, QDateEdit,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtGui import QColor, QFont
 
 from ui.theme import get_font, SPACING
@@ -253,14 +253,20 @@ class ExportTab(QWidget):
         f_row2 = QHBoxLayout()
         f_row2.setSpacing(SPACING["sm"])
         f_row2.addWidget(QLabel("开始日期:"))
-        self.date_start_input = QLineEdit()
-        self.date_start_input.setMaximumWidth(110)
-        self.date_start_input.setPlaceholderText("YYYY-MM-DD")
+        self.date_start_input = QDateEdit()
+        self.date_start_input.setCalendarPopup(True)
+        self.date_start_input.setDisplayFormat("yyyy-MM-dd")
+        self.date_start_input.setSpecialValueText(" ")
+        self.date_start_input.setDate(QDate())
+        self.date_start_input.setFixedSize(120, 30)
         f_row2.addWidget(self.date_start_input)
         f_row2.addWidget(QLabel("~"))
-        self.date_end_input = QLineEdit()
-        self.date_end_input.setMaximumWidth(110)
-        self.date_end_input.setPlaceholderText("YYYY-MM-DD")
+        self.date_end_input = QDateEdit()
+        self.date_end_input.setCalendarPopup(True)
+        self.date_end_input.setDisplayFormat("yyyy-MM-dd")
+        self.date_end_input.setSpecialValueText(" ")
+        self.date_end_input.setDate(QDate())
+        self.date_end_input.setFixedSize(120, 30)
         f_row2.addWidget(self.date_end_input)
         f_row2.addSpacing(20)
         f_row2.addWidget(QLabel("适应症:"))
@@ -504,16 +510,11 @@ class ExportTab(QWidget):
             )
             return
 
-        # Validate dates
-        ds = self.date_start_input.text().strip()
-        de = self.date_end_input.text().strip()
-        date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-        if ds and not date_re.match(ds):
-            QMessageBox.warning(self, "提示", "起始日期格式错误，请使用 YYYY-MM-DD")
-            return
-        if de and not date_re.match(de):
-            QMessageBox.warning(self, "提示", "结束日期格式错误，请使用 YYYY-MM-DD")
-            return
+        # Get date values from QDateEdit
+        dsd = self.date_start_input.date()
+        ded = self.date_end_input.date()
+        ds = dsd.toString("yyyy-MM-dd") if dsd.isValid() and dsd.year() > 2000 else ""
+        de = ded.toString("yyyy-MM-dd") if ded.isValid() and ded.year() > 2000 else ""
 
         self._is_extracting = True
         self.extract_btn.setEnabled(False)
