@@ -33,6 +33,7 @@ from core.constants import (
     FDA_SEARCH_ROUTES,
     FDA_REVIEW_PRIORITIES,
     FDA_SUBMISSION_CLASSES,
+    FDA_REVIEW_DOC_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -339,6 +340,8 @@ class FdaTab(QWidget):
         ]
         data = []
         for r in rows:
+            doc_type = r.get("doc_type", "")
+            doc_type_cn = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type)
             data.append([
                 r.get("brand_name", ""),
                 r.get("generic_name", ""),
@@ -346,7 +349,7 @@ class FdaTab(QWidget):
                 r.get("manufacturer_name", ""),
                 r.get("submission_type", ""),
                 r.get("submission_status_date", ""),
-                r.get("doc_type", ""),
+                doc_type_cn,
             ])
 
         self.table.set_data(columns, data)

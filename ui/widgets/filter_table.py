@@ -30,6 +30,7 @@ from PySide6.QtCore import (
     QModelIndex,
     QSortFilterProxyModel,
     Signal,
+    QPoint,
 )
 from PySide6.QtGui import QAction
 
@@ -278,8 +279,9 @@ class FilterTableView(QTableView):
 
         # Show menu and apply
         header = self.horizontalHeader()
-        pos = header.mapToGlobal(header.sectionPosition(logical_index))
-        pos.setY(pos.y() + header.height())
+        x = header.sectionViewportPosition(logical_index)
+        y = header.height()
+        pos = header.mapToGlobal(QPoint(x, y))
 
         menu.exec(pos)
 

@@ -180,6 +180,7 @@ FDA_REVIEW_DOC_TYPES = {
     "Pharmacology Review(s)": "药理毒理审评",
     "Summary Review": "综述报告",
     "Other Review(s)": "其他审评",
+    "Review": "综合审评",
 }
 
 # ================================================================
