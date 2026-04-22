@@ -839,6 +839,10 @@ class SearchTab(QWidget):
         skip_btn = dlg.addButton("跳过此注册中心", QMessageBox.RejectRole)
         cancel_btn = dlg.addButton("取消全部下载", QMessageBox.DestructiveRole)
 
+        # Default to "continue" (Enter key), Escape = "skip" (not cancel)
+        dlg.setDefaultButton(continue_btn)
+        dlg.setEscapeButton(skip_btn)
+
         dlg.exec()
 
         clicked = dlg.clickedButton()

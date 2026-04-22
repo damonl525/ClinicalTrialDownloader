@@ -195,6 +195,7 @@ def run_r_streaming(
                         choice = on_timeout(int(now - start))
                         if choice == "continue":
                             start = now
+                            last_activity = now
                             continue_count += 1
                             continue
                     proc.kill()
@@ -210,6 +211,7 @@ def run_r_streaming(
                     if on_timeout and continue_count < _MAX_TIMEOUT_CONTINUES:
                         choice = on_timeout(int(now - start))
                         if choice == "continue":
+                            start = now
                             last_activity = now
                             continue_count += 1
                             continue
@@ -235,6 +237,7 @@ def run_r_streaming(
                     _choice = on_timeout(int(time.time() - start))
                     if _choice == "continue":
                         start = time.time()
+                        last_activity = time.time()
                         continue_count += 1
                         # Don't raise — keep reading
                     else:
