@@ -11,7 +11,7 @@ import os
 # ================================================================
 APP_NAME = "临床试验数据下载器"
 APP_NAME_EN = "Clinical Trial Data Downloader"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 # ================================================================
 # 数据库
@@ -187,14 +187,43 @@ FDA_REVIEW_DOC_TYPES = {
 # Old drugs (pre-2017): separate discipline reviews (MedR, StatR, etc.)
 # New drugs (2017+): combined MultidisciplineR + OtherR
 FDA_REVIEW_SUFFIXES = [
-    ("MultidisciplineR", "综合审评"),
-    ("OtherR", "其他审评"),
-    ("MedR", "医学审评"),
-    ("StatR", "统计审评"),
-    ("PharmR", "药理毒理审评"),
-    ("ClinPharmR", "临床药理审评"),
-    ("ChemR", "化学审评"),
+    ("MultidisciplineR", "Multidiscipline Review"),
+    ("OtherR", "Other Review"),
+    ("MedR", "Medical Review"),
+    ("StatR", "Statistical Review"),
+    ("PharmR", "Pharmacology Review"),
+    ("ClinPharmR", "Clinical Pharmacology Review"),
+    ("ChemR", "Chemistry Review"),
 ]
+
+# Mapping from TOC page JavaScript pdfFiles keys to URL suffixes and labels.
+# Used by FdaTocParser to construct only confirmed PDF URLs.
+# Format: {js_key: (url_suffix, english_label, is_review_doc)}
+FDA_PDFFILES_MAP = {
+    # Review documents
+    "multidisciplineR": ("MultidisciplineR", "Multidiscipline Review", True),
+    "medR":             ("MedR",             "Medical Review", True),
+    "statR":            ("StatR",            "Statistical Review", True),
+    "pharmR":           ("PharmR",           "Pharmacology Review", True),
+    "chemR":            ("ChemR",            "Chemistry Review", True),
+    "clinPharmR":       ("ClinPharmR",       "Clinical Pharmacology Review", True),
+    "otherR":           ("OtherR",           "Other Review", True),
+    "sumR":             ("SumR",             "Summary Review", True),
+    "crossR":           ("CrossR",           "Cross Discipline Review", True),
+    "integratedR":      ("IntegratedR",      "Integrated Review", True),
+    "riskR":            ("RiskR",            "Risk Assessment", True),
+    "microR":           ("MicroR",           "Microbiology Review", True),
+    "nameR":            ("NameR",            "Naming Review", True),
+    # Administrative documents
+    "approv":           ("Approv",           "Approval Letter", False),
+    "lbl":              ("Lbl",              "Label", False),
+    "adminCorres":      ("AdminCorres",      "Administrative Correspondence", False),
+    "otherActionLtrs":  ("OtherActionLtrs",  "Other Action Letters", False),
+    "oeList":           ("OEList",           "OE List", False),
+    "memo":             ("Memo",             "Memorandum", False),
+    "rems":             ("Rems",             "REMS", False),
+    "rems1":            ("Rems1",            "REMS Supplement", False),
+}
 
 # ================================================================
 # R 错误中文翻译

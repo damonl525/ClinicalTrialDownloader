@@ -44,6 +44,13 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 - Configurable per-trial timeout via Settings
 - Document type filtering (protocol, SAP, or all)
 
+### FDA Review Documents
+- Standalone FDA tab: search openFDA drugsfda endpoint by drug name, date, manufacturer, etc.
+- TOC page parsing via QWebEnginePage: extracts pdfFiles JS variable to confirm which PDFs exist
+- Direct PDF download via QWebEngineProfile: bypasses FDA Akamai CDN bot detection
+- Rate-limited downloads with random delays, automatic retry, and cooldown on failures
+- Right-click context menu for opening individual documents in browser
+
 ### Progress & Feedback
 - Unified progress bars with ETA estimation
 - Per-trial progress with elapsed/remaining time
@@ -113,6 +120,7 @@ ui/
     database_tab.py              # Tab 1: DB connection & history
     search_tab.py                # Tab 2: Search & download
     export_tab.py                # Tab 3: Extract, filter, export, docs
+    fda_tab.py                   # Tab 4: FDA review document search & download
   widgets/
     progress.py                  # ProgressPanel (bar + ETA + cancel)
     collapsible_card.py          # CollapsibleCard layout
@@ -132,7 +140,9 @@ core/
 service/
   extract_service.py             # Extraction + doc download service
   download_service.py            # Search download service
-  fda_service.py                 # FDA review matching & download
+  fda_service.py                 # FDA openFDA search & TOC expansion
+  fda_toc_parser.py              # QWebEngine TOC page parser (pdfFiles extraction)
+  fda_pdf_downloader.py          # QWebEngine PDF downloader (bypasses Akamai)
 ```
 
 **Data flow**: Python UI -> `CtrdataBridge` -> `Rscript.exe` subprocess -> `ctrdata` R package -> API calls -> SQLite / PDF files on disk.
@@ -159,6 +169,14 @@ python build.py --release  # Release mode (full deps)
 | Tests | pytest | Unit test suite |
 
 ## Changelog
+
+### v1.3.0 (2026-04-23) -- FDA Review Document Download
+- **TOC page parsing**: QWebEnginePage loads FDA TOC.html, extracts pdfFiles JS variable for precise PDF confirmation
+- **Direct PDF download**: QWebEngineProfile.downloadRequested bypasses FDA Akamai CDN bot detection
+- **Rate-limiting**: Random 8-15s delays, auto-retry on failure, 60s cooldown after consecutive failures
+- **Download progress**: ProgressPanel with ETA, cancel button, save path input with QSettings persistence
+- **Document type display**: Original English names (Medical Review, Statistical Review, etc.)
+- **Full logging**: All FDA operations (search, TOC parse, download) logged to runtime log dialog
 
 ### v1.2.0 (2026-04-21) -- UX Efficiency Overhaul
 - **ProgressPanel**: Unified progress widget with ETA, detail line, cancel support across all tabs

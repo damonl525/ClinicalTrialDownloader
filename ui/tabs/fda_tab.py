@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FDA Tab — standalone openFDA search and review document browsing.
+FDA Tab — standalone openFDA search and review document browsing/downloading.
 No dependency on database, CtrdataBridge, or trial data.
-Documents are opened in the user's browser (FDA blocks automated downloads).
+Documents can be downloaded directly via QWebEngine (bypasses FDA bot detection)
+or opened in the user's browser.
 """
 
 import logging
+import os
 import threading
 import webbrowser
+
+logger = logging.getLogger(__name__)
 
 from PySide6.QtWidgets import (
     QWidget,
@@ -21,19 +25,22 @@ from PySide6.QtWidgets import (
     QComboBox,
     QMessageBox,
     QDateEdit,
+    QFileDialog,
     QMenu,
 )
 from PySide6.QtCore import Qt, Signal, QDate
 
 from ui.widgets.card import CollapsibleCard
 from ui.widgets.filter_table import FilterTableView
+from ui.widgets.progress import ProgressPanel
 from ui.theme import SPACING
+from ui.app import get_settings, get_recent_db
 from core.constants import (
+    DEFAULT_DB_NAME,
     FDA_APPLICATION_TYPES,
     FDA_SEARCH_ROUTES,
     FDA_REVIEW_PRIORITIES,
     FDA_SUBMISSION_CLASSES,
-    FDA_REVIEW_DOC_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +52,9 @@ class FdaTab(QWidget):
     # Signals for thread-safe communication
     _search_complete = Signal(dict)
     _search_error = Signal(str)
+    _toc_parse_complete = Signal(dict)  # {toc_url: TocPageData | None}
+    _toc_parse_error = Signal(str)
+    _download_complete = Signal(dict)   # {success: [paths], failed: [{...}]}
 
     def __init__(self, app, parent=None):
         super().__init__(parent)
@@ -53,6 +63,7 @@ class FdaTab(QWidget):
         self._current_skip = 0
         self._current_total = 0
         self._all_rows = []
+        self._downloader = None
 
         layout = QVBoxLayout(self)
         layout.setSpacing(SPACING["md"])
@@ -64,6 +75,9 @@ class FdaTab(QWidget):
         # Signal connections
         self._search_complete.connect(self._on_search_complete)
         self._search_error.connect(self._on_search_error)
+        self._toc_parse_complete.connect(self._on_toc_parse_complete)
+        self._toc_parse_error.connect(self._on_toc_parse_error)
+        self._download_complete.connect(self._on_download_complete)
 
         # Right-click context menu on table
         self.table.context_menu_requested.connect(self._on_table_context_menu)
@@ -202,6 +216,23 @@ class FdaTab(QWidget):
     # ================================================================
 
     def _build_action_bar(self, parent_layout):
+        # Save path row
+        path_row = QHBoxLayout()
+        path_row.setSpacing(SPACING["sm"])
+
+        path_row.addWidget(QLabel("保存到:"))
+        default_dir = self._get_default_save_dir()
+        self.save_path_input = QLineEdit(default_dir)
+        path_row.addWidget(self.save_path_input)
+
+        self.browse_btn = QPushButton("浏览...")
+        self.browse_btn.setObjectName("secondary")
+        self.browse_btn.clicked.connect(self._browse_save_path)
+        path_row.addWidget(self.browse_btn)
+
+        parent_layout.addLayout(path_row)
+
+        # Action buttons row
         action_row = QHBoxLayout()
         action_row.setSpacing(SPACING["sm"])
 
@@ -220,14 +251,18 @@ class FdaTab(QWidget):
 
         action_row.addStretch()
 
-        self.open_browser_btn = QPushButton("批量打开浏览器")
-        self.open_browser_btn.setObjectName("primary")
-        self.open_browser_btn.setEnabled(False)
-        self.open_browser_btn.setToolTip("在浏览器中打开选中的审评文档（FDA 封锁自动化下载）")
-        self.open_browser_btn.clicked.connect(self._open_in_browser)
-        action_row.addWidget(self.open_browser_btn)
+        self.download_btn = QPushButton("批量下载")
+        self.download_btn.setObjectName("primary")
+        self.download_btn.setEnabled(False)
+        self.download_btn.setToolTip("下载选中的审评文档 PDF")
+        self.download_btn.clicked.connect(self._do_download)
+        action_row.addWidget(self.download_btn)
 
         parent_layout.addLayout(action_row)
+
+        # Progress panel
+        self.download_progress = ProgressPanel()
+        parent_layout.addWidget(self.download_progress)
 
     # ================================================================
     # Search logic
@@ -282,6 +317,7 @@ class FdaTab(QWidget):
         self._current_skip = 0
         self.search_btn.setEnabled(False)
         self.result_label.setText("正在搜索...")
+        logger.info("FDA搜索请求: %s", params.get("drug_name", ""))
 
         def _worker():
             try:
@@ -295,31 +331,103 @@ class FdaTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_search_complete(self, result):
-        self.search_btn.setEnabled(True)
         rows = result.get("rows", [])
         self._current_total = result.get("total", 0)
 
         if not rows and self._current_total == 0:
+            self.search_btn.setEnabled(True)
             self.result_label.setText("未找到结果")
             self.table.set_data([], [])
             self._all_rows = []
             return
         elif not rows:
+            self.search_btn.setEnabled(True)
             self.result_label.setText("当前页无审评文档结果")
             self.table.set_data([], [])
             self._all_rows = []
             self._update_page_label()
             return
 
-        # Map to table data
+        # Check if any TOC URLs need parsing
+        toc_urls = list({
+            r["doc_url"] for r in rows
+            if r.get("doc_url", "").lower().endswith((".html", ".cfm"))
+        })
+
+        logger.info(
+            "FDA搜索结果: %d 条API结果, 其中 %d 条含TOC目录",
+            self._current_total, len(toc_urls),
+        )
+
+        if not toc_urls:
+            # No TOC rows — show directly
+            self._populate_table(rows)
+            self.search_btn.setEnabled(True)
+            self.result_label.setText(f"共 {self._current_total} 条结果")
+            return
+
+        # Parse TOC pages to determine which PDFs exist
+        self.result_label.setText(f"正在解析审评文档目录 (0/{len(toc_urls)})...")
+        self._toc_urls = toc_urls
+        self._toc_raw_rows = rows
+
+        try:
+            from service.fda_toc_parser import FdaTocParser
+            self._toc_parser = FdaTocParser(self)
+            self._toc_parser.parse_progress.connect(self._on_toc_parse_progress)
+            self._toc_parser.parse_complete.connect(self._toc_parse_complete.emit)
+            self._toc_parser.parse_error.connect(self._toc_parse_error.emit)
+            self._toc_parser.parse(toc_urls)
+        except ImportError:
+            logger.warning("PySide6-WebEngineWidgets 不可用，使用降级展开")
+            self._fallback_expand(rows)
+
+    def _on_toc_parse_progress(self, done, total):
+        self.result_label.setText(f"正在解析审评文档目录 ({done}/{total})...")
+
+    def _on_toc_parse_complete(self, toc_data):
+        self.search_btn.setEnabled(True)
+        from service.fda_service import FdaSearchService
+        svc = FdaSearchService()
+        expanded = svc.expand_from_pdffiles(self._toc_raw_rows, toc_data)
+        shown = self._populate_table(expanded)
+
+        success = sum(1 for v in toc_data.values() if v is not None)
+        if shown != self._current_total:
+            self.result_label.setText(
+                f"共 {self._current_total} 条API结果，解析后 {shown} 条确认文档"
+            )
+        else:
+            self.result_label.setText(f"共 {shown} 条结果")
+        logger.info("FDA目录解析完成: 展开为 %d 条确认文档", shown)
+
+    def _on_toc_parse_error(self, error_msg):
+        self.search_btn.setEnabled(True)
+        logger.warning("FDA目录解析失败: %s", error_msg)
+        self._fallback_expand(self._toc_raw_rows)
+
+    def _fallback_expand(self, rows):
+        """Fall back to blind 7-suffix expansion when TOC parsing fails."""
+        from service.fda_service import FdaSearchService
+        svc = FdaSearchService()
+        expanded = svc.expand_toc_urls(rows)
+        shown = self._populate_table(expanded)
+        self.search_btn.setEnabled(True)
+        if shown:
+            self.result_label.setText(
+                f"目录解析失败，已展示 {shown} 条可能的审评文档（部分链接可能不存在）"
+            )
+        else:
+            self.result_label.setText("未找到审评文档")
+
+    def _populate_table(self, rows) -> int:
+        """Map row dicts to table data and display. Returns row count."""
         columns = [
             "药物名", "通用名", "申请号", "厂商",
             "提交类型", "提交日期", "文档类型",
         ]
         data = []
         for r in rows:
-            doc_type = r.get("doc_type", "")
-            doc_type_cn = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type)
             data.append([
                 r.get("brand_name", ""),
                 r.get("generic_name", ""),
@@ -327,23 +435,18 @@ class FdaTab(QWidget):
                 r.get("manufacturer_name", ""),
                 r.get("submission_type", ""),
                 r.get("submission_status_date", ""),
-                doc_type_cn,
+                r.get("doc_type", ""),
             ])
 
         self.table.set_data(columns, data)
-        self._all_rows = rows  # store for browser open
+        self._all_rows = rows
         self._update_page_label()
-        shown = len(rows)
-        if shown != self._current_total:
-            self.result_label.setText(
-                f"共 {self._current_total} 条API结果，展开为 {shown} 条审评文档"
-            )
-        else:
-            self.result_label.setText(f"共 {shown} 条结果")
+        return len(rows)
 
     def _on_search_error(self, error_msg):
         self.search_btn.setEnabled(True)
         self.result_label.setText("搜索失败")
+        logger.error("FDA搜索失败: %s", error_msg)
         QMessageBox.critical(self, "搜索失败", error_msg)
 
     # -- Pagination --
@@ -405,7 +508,7 @@ class FdaTab(QWidget):
     def _update_selected_count(self):
         count = len(self.table.checked_rows())
         self.selected_label.setText(f"已选 {count} 条")
-        self.open_browser_btn.setEnabled(count > 0)
+        self.download_btn.setEnabled(count > 0)
 
     def _open_in_browser(self):
         """Open selected document URLs in browser tabs."""
@@ -433,7 +536,145 @@ class FdaTab(QWidget):
             if webbrowser.open(url):
                 opened += 1
 
+        logger.info("FDA: 在浏览器中打开 %d 个审评文档", opened)
         self.app.status.showMessage(f"已在浏览器中打开 {opened} 个审评文档")
+
+    # ================================================================
+    # Download logic
+    # ================================================================
+
+    def _get_default_save_dir(self) -> str:
+        """Get default download directory: QSettings > DB directory."""
+        settings = get_settings()
+        saved = settings.value("fda/download_path", "")
+        if saved and os.path.isdir(saved):
+            return saved
+        db_path = get_recent_db() or DEFAULT_DB_NAME
+        return os.path.dirname(os.path.abspath(db_path))
+
+    def _do_download(self):
+        """Start downloading selected documents."""
+        checked = self.table.checked_rows()
+        if not checked:
+            return
+
+        docs = [self._all_rows[i] for i in checked if i < len(self._all_rows)]
+        docs = [d for d in docs if d.get("doc_url", "")]
+        if not docs:
+            QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
+            return
+
+        save_dir = self.save_path_input.text().strip()
+        if not save_dir:
+            QMessageBox.warning(self, "提示", "请先设置保存路径")
+            return
+
+        # Confirm
+        msg = (
+            f"即将下载 {len(docs)} 个审评文档 PDF。\n"
+            f"保存到: {save_dir}\n\n确认开始下载？"
+        )
+        if QMessageBox.question(self, "确认下载", msg) != QMessageBox.Yes:
+            return
+
+        # Save to QSettings for next time
+        get_settings().setValue("fda/download_path", save_dir)
+
+        # Start download
+        self.download_btn.setEnabled(False)
+        self.search_btn.setEnabled(False)
+
+        self.download_progress.start(len(docs))
+        self.download_progress.set_cancel_enabled(True)
+        self.download_progress.cancelled.connect(self._cancel_download)
+        self._download_start_time = None
+
+        import time
+        self._download_start_time = time.time()
+
+        try:
+            from service.fda_pdf_downloader import FdaPdfDownloader
+            self._downloader = FdaPdfDownloader(self)
+            self._downloader.download_progress.connect(self._on_download_progress)
+            self._downloader.download_complete.connect(self._download_complete.emit)
+            self._downloader.download(docs, save_dir)
+            logger.info("开始下载FDA审评文档: %d 个文件", len(docs))
+        except ImportError:
+            logger.warning("PySide6-WebEngineWidgets 不可用，无法下载")
+            self.download_btn.setEnabled(True)
+            self.search_btn.setEnabled(True)
+            self.download_progress.reset()
+            QMessageBox.critical(
+                self, "下载失败",
+                "PySide6-WebEngineWidgets 未安装，无法下载 FDA 文档。\n"
+                "请安装: pip install PySide6-WebEngineWidgets",
+            )
+
+    def _browse_save_path(self):
+        """Browse for save directory."""
+        current = self.save_path_input.text().strip() or self._get_default_save_dir()
+        path = QFileDialog.getExistingDirectory(self, "选择保存目录", current)
+        if path:
+            self.save_path_input.setText(path)
+
+    def _cancel_download(self):
+        """Cancel active download."""
+        self.download_progress.set_cancel_enabled(False)
+        self.download_progress.update_progress(0, 0, "正在取消...")
+        if self._downloader:
+            self._downloader.cancel()
+
+    def _on_download_progress(self, current: int, total: int, filename: str):
+        self.download_progress.update_progress(
+            current, total, f"正在下载 {filename} ({current}/{total})"
+        )
+        # Show ETA after 2+ items
+        if current >= 2 and self._download_start_time:
+            import time
+            elapsed = time.time() - self._download_start_time
+            per_item = elapsed / current
+            remaining = per_item * (total - current)
+            self.download_progress.update_eta(elapsed, remaining)
+
+        logger.info("FDA文档下载进度: %d/%d - %s", current, total, filename)
+
+    def _on_download_complete(self, results: dict):
+        self.download_btn.setEnabled(True)
+        self.search_btn.setEnabled(True)
+
+        # Disconnect cancel signal
+        try:
+            self.download_progress.cancelled.disconnect(self._cancel_download)
+        except RuntimeError:
+            pass
+
+        success = results.get("success", [])
+        failed = results.get("failed", [])
+        skipped = sum(1 for s in success if "(跳过)" in s or os.path.exists(s))
+
+        self.download_progress.finish(
+            success=len(success), failed=len(failed),
+        )
+
+        if not failed:
+            self.result_label.setText(
+                f"下载完成: {len(success)} 个文件已保存"
+            )
+            self.app.status.showMessage(f"已下载 {len(success)} 个 FDA 审评文档")
+        else:
+            self.result_label.setText(
+                f"下载完成: {len(success)} 成功, {len(failed)} 失败"
+            )
+            errors = "\n".join(
+                f"• {f.get('filename', '未知')}: {f.get('error', '未知错误')}"
+                for f in failed[:10]
+            )
+            QMessageBox.warning(
+                self, "部分下载失败",
+                f"成功: {len(success)} 个\n"
+                f"失败: {len(failed)} 个\n\n"
+                f"失败详情:\n{errors}",
+            )
 
     # ================================================================
     # Right-click context menu

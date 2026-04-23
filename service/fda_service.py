@@ -18,6 +18,7 @@ import requests
 from core.constants import (
     FDA_API_BASE,
     FDA_API_RATE_LIMIT,
+    FDA_PDFFILES_MAP,
     FDA_REVIEW_DOC_TYPES,
     FDA_REVIEW_SUFFIXES,
 )
@@ -144,6 +145,12 @@ class FdaSearchService:
         query_params = self._build_search_params(params)
         url = self._build_url(query_params, skip)
 
+        drug_name = params.get("drug_name", "")
+        logger.info(
+            "FDA搜索: drug_name=%s, skip=%d, 参数=%s",
+            drug_name, skip, {k: v for k, v in params.items() if k != "drug_name"},
+        )
+
         self._rate_limit()
 
         try:
@@ -153,13 +160,20 @@ class FdaSearchService:
             resp.raise_for_status()
             data = resp.json()
         except requests.RequestException as e:
-            logger.error("openFDA search failed: %s", e)
+            logger.error("FDA搜索失败: %s", e)
             raise
 
         total = data.get("meta", {}).get("results", {}).get("total", 0)
         results = data.get("results", [])
         rows = self._flatten_results(results)
-        rows = self.expand_toc_urls(rows)
+
+        toc_count = sum(
+            1 for r in rows if r.get("doc_url", "").lower().endswith((".html", ".cfm"))
+        )
+        logger.info(
+            "FDA搜索完成: %d 条API结果, %d 条文档(其中 %d 条TOC目录)",
+            total, len(rows), toc_count,
+        )
 
         return {"rows": rows, "total": total}
 
@@ -274,9 +288,118 @@ class FdaSearchService:
                         "submission_status_date": row["submission_status_date"],
                         "doc_type": cn_label,
                         "doc_url": pdf_url,
+                        "_is_constructed": True,
+                        "_toc_base": base,
                     })
             else:
                 expanded.append(row)
+
+        return expanded
+
+    # ------------------------------------------------------------------
+    # URL verification via TOC page pdfFiles
+    # ------------------------------------------------------------------
+
+    def expand_from_pdffiles(
+        self,
+        rows: List[dict],
+        toc_data: Dict[str, "TocPageData"],
+    ) -> List[dict]:
+        """Expand TOC rows using parsed pdfFiles data from TOC pages.
+
+        For TOC URLs with successful parse: expand only confirmed PDFs.
+        For TOC URLs with failed parse (None): fall back to blind 7-suffix expansion.
+        Direct PDF rows: keep as-is.
+        """
+        from service.fda_toc_parser import TocPageData
+
+        direct_rows = []
+        toc_rows = []
+
+        for row in rows:
+            url = row.get("doc_url", "")
+            if url.lower().endswith((".html", ".cfm")):
+                toc_rows.append(row)
+            else:
+                direct_rows.append(row)
+
+        if not toc_rows:
+            return rows
+
+        expanded = list(direct_rows)
+        seen_urls = set(r.get("doc_url", "") for r in direct_rows)
+
+        for row in toc_rows:
+            toc_url = row.get("doc_url", "")
+            data = toc_data.get(toc_url)
+
+            if data is not None and data.pdf_files:
+                # Precise expansion using pdfFiles
+                # Extract full base path from TOC URL (everything before TOC.html)
+                toc_idx = toc_url.lower().rfind("toc.html")
+                if toc_idx == -1:
+                    toc_idx_cf = toc_url.lower().rfind(".cfm")
+                    if toc_idx_cf == -1:
+                        expanded.append(row)
+                        continue
+                    url_base = toc_url[:toc_idx_cf]
+                else:
+                    url_base = toc_url[:toc_idx]
+
+                for key, value in data.pdf_files.items():
+                    if value != 1:
+                        continue
+                    mapping = FDA_PDFFILES_MAP.get(key)
+                    if not mapping:
+                        continue
+
+                    suffix, cn_label, _ = mapping
+                    pdf_url = f"{url_base}{suffix}.pdf"
+
+                    if pdf_url in seen_urls:
+                        continue
+                    seen_urls.add(pdf_url)
+
+                    expanded.append({
+                        "brand_name": row.get("brand_name", "")
+                        or (data.drug_name or ""),
+                        "generic_name": row.get("generic_name", ""),
+                        "application_number": row.get("application_number", ""),
+                        "manufacturer_name": row.get("manufacturer_name", "")
+                        or (data.company_name or ""),
+                        "submission_type": row.get("submission_type", ""),
+                        "submission_status_date": row.get(
+                            "submission_status_date", ""
+                        ),
+                        "doc_type": cn_label,
+                        "doc_url": pdf_url,
+                    })
+            else:
+                # Fallback: blind 7-suffix expansion for this TOC
+                toc_idx = toc_url.lower().rfind("toc.html")
+                if toc_idx == -1:
+                    expanded.append(row)
+                    continue
+                base = toc_url[:toc_idx]
+
+                for suffix, cn_label in FDA_REVIEW_SUFFIXES:
+                    pdf_url = f"{base}{suffix}.pdf"
+                    if pdf_url in seen_urls:
+                        continue
+                    seen_urls.add(pdf_url)
+
+                    expanded.append({
+                        "brand_name": row.get("brand_name", ""),
+                        "generic_name": row.get("generic_name", ""),
+                        "application_number": row.get("application_number", ""),
+                        "manufacturer_name": row.get("manufacturer_name", ""),
+                        "submission_type": row.get("submission_type", ""),
+                        "submission_status_date": row.get(
+                            "submission_status_date", ""
+                        ),
+                        "doc_type": cn_label,
+                        "doc_url": pdf_url,
+                    })
 
         return expanded
 
@@ -382,9 +505,9 @@ def _make_download_filename(
     date: str,
     doc_type: str,
 ) -> str:
-    """Generate filename: {brand_name}_{submission_type}_{date}_{doc_type_cn}.pdf"""
+    """Generate filename: {brand_name}_{submission_type}_{date}_{doc_type}.pdf"""
     import re
-    # Chinese abbreviation for doc type
+    # Map API doc_type to short label; fallback to underscored English name
     cn_type = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type.replace(" ", "_"))
     # Sanitize for filesystem
     cn_type = cn_type.replace("/", "_").replace("\\", "_")
