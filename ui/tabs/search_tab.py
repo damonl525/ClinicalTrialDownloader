@@ -13,8 +13,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox, QFrame,
     QSizePolicy, QTabWidget, QMessageBox, QScrollArea,
+    QDateEdit,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtGui import QFont
 
 from ui.theme import get_font, SPACING
@@ -271,15 +272,13 @@ class SearchTab(QWidget):
         adv_row2 = QHBoxLayout()
         adv_row2.setSpacing(SPACING["sm"])
         adv_row2.addWidget(QLabel("开始日期从:"))
-        self.start_after_input = QLineEdit()
-        self.start_after_input.setMaximumWidth(110)
-        self.start_after_input.setPlaceholderText("YYYY-MM-DD")
+        self.start_after_input, clear_sa = self._make_date_edit()
         adv_row2.addWidget(self.start_after_input)
+        adv_row2.addWidget(clear_sa)
         adv_row2.addWidget(QLabel("到:"))
-        self.start_before_input = QLineEdit()
-        self.start_before_input.setMaximumWidth(110)
-        self.start_before_input.setPlaceholderText("YYYY-MM-DD")
+        self.start_before_input, clear_sb = self._make_date_edit()
         adv_row2.addWidget(self.start_before_input)
+        adv_row2.addWidget(clear_sb)
         adv_row2.addWidget(QLabel("EUCTR为注册日期"))
         adv_row2.addStretch()
         adv_layout.addLayout(adv_row2)
@@ -288,15 +287,13 @@ class SearchTab(QWidget):
         adv_row3 = QHBoxLayout()
         adv_row3.setSpacing(SPACING["sm"])
         adv_row3.addWidget(QLabel("完成日期从:"))
-        self.completed_after_input = QLineEdit()
-        self.completed_after_input.setMaximumWidth(110)
-        self.completed_after_input.setPlaceholderText("YYYY-MM-DD")
+        self.completed_after_input, clear_ca = self._make_date_edit()
         adv_row3.addWidget(self.completed_after_input)
+        adv_row3.addWidget(clear_ca)
         adv_row3.addWidget(QLabel("到:"))
-        self.completed_before_input = QLineEdit()
-        self.completed_before_input.setMaximumWidth(110)
-        self.completed_before_input.setPlaceholderText("YYYY-MM-DD")
+        self.completed_before_input, clear_cb = self._make_date_edit()
         adv_row3.addWidget(self.completed_before_input)
+        adv_row3.addWidget(clear_cb)
         adv_row3.addStretch()
         adv_layout.addLayout(adv_row3)
 
@@ -385,6 +382,25 @@ class SearchTab(QWidget):
 
     # ── Mode change ──
 
+    @staticmethod
+    def _make_date_edit():
+        """Create QDateEdit with calendar popup and clear button."""
+        _EMPTY = QDate(2000, 1, 1)
+        de = QDateEdit()
+        de.setCalendarPopup(True)
+        de.setDisplayFormat("yyyy-MM-dd")
+        de.setMinimumDate(_EMPTY)
+        de.setSpecialValueText(" ")
+        de.setDate(_EMPTY)
+        de.setFixedSize(120, 30)
+
+        clear = QPushButton("\u00d7")
+        clear.setFixedSize(22, 22)
+        clear.setToolTip("清除日期")
+        clear.clicked.connect(lambda: de.setDate(_EMPTY))
+
+        return de, clear
+
     def _on_mode_changed(self, index):
         mode = self._current_mode()
         if hasattr(self, 'browser_btn'):
@@ -396,6 +412,22 @@ class SearchTab(QWidget):
 
     # ── Collect params ──
 
+    @staticmethod
+    def _date_val(date_edit: QDateEdit) -> str:
+        """Extract date string from QDateEdit, return '' if not set."""
+        d = date_edit.date()
+        return d.toString("yyyy-MM-dd") if d.isValid() and d.year() > 2000 else ""
+
+    @staticmethod
+    def _restore_date(date_edit: QDateEdit, text: str):
+        """Restore QDateEdit from saved text value."""
+        if text and len(text) == 10:
+            d = QDate.fromString(text, "yyyy-MM-dd")
+            if d.isValid() and d.year() > 2000:
+                date_edit.setDate(d)
+                return
+        date_edit.setDate(QDate(2000, 1, 1))
+
     def _collect_form_params(self) -> dict:
         return {
             "condition": self.condition_input.text().strip(),
@@ -403,10 +435,10 @@ class SearchTab(QWidget):
             "search_phrase": self.phrase_input.text().strip(),
             "phase": SEARCH_PHASES.get(self.phase_combo.currentText(), ""),
             "recruitment": SEARCH_RECRUITMENT.get(self.recruitment_combo.currentText(), ""),
-            "start_after": self.start_after_input.text().strip(),
-            "start_before": self.start_before_input.text().strip(),
-            "completed_after": self.completed_after_input.text().strip(),
-            "completed_before": self.completed_before_input.text().strip(),
+            "start_after": self._date_val(self.start_after_input),
+            "start_before": self._date_val(self.start_before_input),
+            "completed_after": self._date_val(self.completed_after_input),
+            "completed_before": self._date_val(self.completed_before_input),
             "population": SEARCH_POPULATIONS.get(self.population_combo.currentText(), ""),
             "countries": self.countries_input.text().strip(),
             "only_med_interv_trials": self.only_med_check.isChecked(),
@@ -560,19 +592,6 @@ class SearchTab(QWidget):
 
     def _start_form_download(self):
         params = self._collect_form_params()
-
-        # Validate dates
-        date_fields = [
-            ("开始日期从", params["start_after"]),
-            ("开始日期到", params["start_before"]),
-            ("完成日期从", params["completed_after"]),
-            ("完成日期到", params["completed_before"]),
-        ]
-        for label, val in date_fields:
-            if val and not re.match(r"^\d{4}-\d{2}-\d{2}$", val):
-                QMessageBox.warning(self, "日期格式错误", f"{label}: 请使用 YYYY-MM-DD 格式")
-                self._set_downloading(False)
-                return
 
         selected_regs = self._get_selected_registers()
         if not selected_regs:
@@ -754,10 +773,10 @@ class SearchTab(QWidget):
         s.setValue("search_phrase", self.phrase_input.text())
         s.setValue("phase_index", self.phase_combo.currentIndex())
         s.setValue("recruitment_index", self.recruitment_combo.currentIndex())
-        s.setValue("start_after", self.start_after_input.text())
-        s.setValue("start_before", self.start_before_input.text())
-        s.setValue("completed_after", self.completed_after_input.text())
-        s.setValue("completed_before", self.completed_before_input.text())
+        s.setValue("start_after", self._date_val(self.start_after_input))
+        s.setValue("start_before", self._date_val(self.start_before_input))
+        s.setValue("completed_after", self._date_val(self.completed_after_input))
+        s.setValue("completed_before", self._date_val(self.completed_before_input))
         s.setValue("population_index", self.population_combo.currentIndex())
         s.setValue("countries", self.countries_input.text())
         s.setValue("only_med", self.only_med_check.isChecked())
@@ -791,10 +810,10 @@ class SearchTab(QWidget):
         if isinstance(recruit_idx, int) and 0 <= recruit_idx < self.recruitment_combo.count():
             self.recruitment_combo.setCurrentIndex(recruit_idx)
 
-        self.start_after_input.setText(s.value("start_after", ""))
-        self.start_before_input.setText(s.value("start_before", ""))
-        self.completed_after_input.setText(s.value("completed_after", ""))
-        self.completed_before_input.setText(s.value("completed_before", ""))
+        self._restore_date(self.start_after_input, s.value("start_after", ""))
+        self._restore_date(self.start_before_input, s.value("start_before", ""))
+        self._restore_date(self.completed_after_input, s.value("completed_after", ""))
+        self._restore_date(self.completed_before_input, s.value("completed_before", ""))
 
         pop_idx = s.value("population_index", 0)
         if isinstance(pop_idx, int) and 0 <= pop_idx < self.population_combo.count():

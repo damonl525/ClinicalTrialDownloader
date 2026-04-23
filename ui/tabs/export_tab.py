@@ -15,9 +15,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QCheckBox, QFrame, QFileDialog,
     QSizePolicy, QComboBox, QHeaderView, QMessageBox, QMenu,
-    QScrollArea,
+    QScrollArea, QDateEdit,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QDate
 from PySide6.QtGui import QColor, QFont
 
 from ui.theme import get_font, SPACING
@@ -120,12 +120,6 @@ class ExportTab(QWidget):
     _doc_progress = Signal(int, int, str, str)  # current, total, trial_id, status
     _doc_complete = Signal(dict)
     _doc_error = Signal(str)
-    _fda_match_progress = Signal(int, int, str)  # current, total, drug_name
-    _fda_match_complete = Signal(dict)
-    _fda_match_error = Signal(str)
-    _fda_doc_progress = Signal(int, int, str)  # current, total, filename
-    _fda_doc_complete = Signal(dict)
-    _fda_doc_error = Signal(str)
     _fields_loaded = Signal(list)   # loaded field names from background thread
 
     def __init__(self, main_window, parent=None):
@@ -139,25 +133,12 @@ class ExportTab(QWidget):
         self._doc_start_time = None
         self._setup_ui()
 
-        # FDA match state
-        self._fda_match_results: dict = {}
-        self._fda_match_done: bool = False
-        self._fda_drug_to_rows: dict = {}
-        self._pending_fda_download: bool = False
-        self._fda_cancelled: bool = False
-
         # Connect signals
         self._extract_complete.connect(self._on_extract_complete)
         self._extract_error.connect(self._on_extract_error)
         self._doc_progress.connect(self._on_doc_progress)
         self._doc_complete.connect(self._on_doc_complete)
         self._doc_error.connect(self._on_doc_error)
-        self._fda_match_progress.connect(self._on_fda_match_progress)
-        self._fda_match_complete.connect(self._on_fda_match_complete)
-        self._fda_match_error.connect(self._on_fda_match_error)
-        self._fda_doc_progress.connect(self._on_fda_doc_progress)
-        self._fda_doc_complete.connect(self._on_fda_doc_complete)
-        self._fda_doc_error.connect(self._on_fda_doc_error)
         self._fields_loaded.connect(self._on_fields_loaded)
 
     def _make_card(self) -> QFrame:
@@ -272,15 +253,13 @@ class ExportTab(QWidget):
         f_row2 = QHBoxLayout()
         f_row2.setSpacing(SPACING["sm"])
         f_row2.addWidget(QLabel("开始日期:"))
-        self.date_start_input = QLineEdit()
-        self.date_start_input.setMaximumWidth(110)
-        self.date_start_input.setPlaceholderText("YYYY-MM-DD")
+        self.date_start_input, clear_ds = self._make_date_edit()
         f_row2.addWidget(self.date_start_input)
+        f_row2.addWidget(clear_ds)
         f_row2.addWidget(QLabel("~"))
-        self.date_end_input = QLineEdit()
-        self.date_end_input.setMaximumWidth(110)
-        self.date_end_input.setPlaceholderText("YYYY-MM-DD")
+        self.date_end_input, clear_de = self._make_date_edit()
         f_row2.addWidget(self.date_end_input)
+        f_row2.addWidget(clear_de)
         f_row2.addSpacing(20)
         f_row2.addWidget(QLabel("适应症:"))
         self.condition_input = QLineEdit()
@@ -310,14 +289,6 @@ class ExportTab(QWidget):
         self.extract_btn.setObjectName("primary")
         self.extract_btn.clicked.connect(self._extract)
         extract_row.addWidget(self.extract_btn)
-        self.fda_match_btn = QPushButton("匹配FDA审评资料")
-        self.fda_match_btn.setObjectName("primary")
-        self.fda_match_btn.setToolTip(
-            "从提取数据中解析药物名称，查询 openFDA 数据库匹配审评资料"
-        )
-        self.fda_match_btn.setEnabled(False)
-        self.fda_match_btn.clicked.connect(self._start_fda_match)
-        extract_row.addWidget(self.fda_match_btn)
         self.export_btn = QPushButton("导出 CSV")
         self.export_btn.setObjectName("primary")
         self.export_btn.clicked.connect(self._export_csv)
@@ -331,13 +302,6 @@ class ExportTab(QWidget):
         # ── Extraction progress (below extract row) ──
         self.extract_progress = ProgressPanel()
         layout.addWidget(self.extract_progress)
-
-        # ── FDA match progress (below extract progress) ──
-        self.fda_progress = ProgressPanel()
-        layout.addWidget(self.fda_progress)
-        self.fda_status_label = QLabel("请先提取数据")
-        self.fda_status_label.setStyleSheet("color: #64748B;")
-        layout.addWidget(self.fda_status_label)
 
         # ── Data preview table ──
         preview_card = self._make_card()
@@ -421,13 +385,6 @@ class ExportTab(QWidget):
         self.doc_both_btn.setEnabled(False)
         doc_btn_row.addWidget(self.doc_both_btn)
 
-        self.doc_fda_btn = QPushButton("下载FDA审评资料")
-        self.doc_fda_btn.setObjectName("secondary")
-        self.doc_fda_btn.setToolTip("下载匹配到的FDA审评资料PDF")
-        self.doc_fda_btn.setEnabled(False)
-        self.doc_fda_btn.clicked.connect(self._download_fda_docs)
-        doc_btn_row.addWidget(self.doc_fda_btn)
-
         self.doc_all_btn = QPushButton("全部文档")
         self.doc_all_btn.setObjectName("secondary")
         self.doc_all_btn.setToolTip("下载所有可用文档（包含知情同意书等）")
@@ -454,6 +411,25 @@ class ExportTab(QWidget):
         self._on_scope_change()
 
     # ── Scope ──
+
+    @staticmethod
+    def _make_date_edit():
+        """Create QDateEdit with calendar popup and clear button."""
+        _EMPTY = QDate(2000, 1, 1)
+        de = QDateEdit()
+        de.setCalendarPopup(True)
+        de.setDisplayFormat("yyyy-MM-dd")
+        de.setMinimumDate(_EMPTY)
+        de.setSpecialValueText(" ")
+        de.setDate(_EMPTY)
+        de.setFixedSize(120, 30)
+
+        clear = QPushButton("\u00d7")
+        clear.setFixedSize(22, 22)
+        clear.setToolTip("清除日期")
+        clear.clicked.connect(lambda: de.setDate(_EMPTY))
+
+        return de, clear
 
     def _on_scope_change(self):
         self.refresh_scope_counts()
@@ -545,16 +521,11 @@ class ExportTab(QWidget):
             )
             return
 
-        # Validate dates
-        ds = self.date_start_input.text().strip()
-        de = self.date_end_input.text().strip()
-        date_re = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-        if ds and not date_re.match(ds):
-            QMessageBox.warning(self, "提示", "起始日期格式错误，请使用 YYYY-MM-DD")
-            return
-        if de and not date_re.match(de):
-            QMessageBox.warning(self, "提示", "结束日期格式错误，请使用 YYYY-MM-DD")
-            return
+        # Get date values from QDateEdit
+        dsd = self.date_start_input.date()
+        ded = self.date_end_input.date()
+        ds = dsd.toString("yyyy-MM-dd") if dsd.isValid() and dsd.year() > 2000 else ""
+        de = ded.toString("yyyy-MM-dd") if ded.isValid() and ded.year() > 2000 else ""
 
         self._is_extracting = True
         self.extract_btn.setEnabled(False)
@@ -648,17 +619,6 @@ class ExportTab(QWidget):
         else:
             self._enable_doc_buttons(False)
             self.doc_status.setText("没有可下载的数据")
-
-        # Reset FDA match state for new extraction
-        self._fda_match_results = {}
-        self._fda_match_done = False
-        self._fda_drug_to_rows = {}
-        self._pending_fda_download = False
-        self.fda_match_btn.setEnabled(bool(ids))
-        self.doc_fda_btn.setEnabled(False)
-        self.doc_all_btn.setText("全部文档")
-        self.fda_status_label.setText("可开始匹配FDA审评资料" if ids else "请先提取数据")
-        self.fda_progress.reset()
 
     def _on_extract_error(self, error_msg):
         self._is_extracting = False
@@ -864,12 +824,7 @@ class ExportTab(QWidget):
         self._last_docs_regexp = doc_regexp
         total = len(filtered_ids)
 
-        # Chain FDA download if "全部文档" clicked and FDA matched
-        if doc_regexp is None and self._fda_match_done:
-            self._pending_fda_download = True
-
         self._enable_doc_buttons(False)
-        self.doc_fda_btn.setEnabled(False)
         self.doc_progress.start(total)
         self.doc_progress.set_cancel_enabled(True)
         self.doc_progress.cancelled.connect(self._cancel_doc_download)
@@ -930,11 +885,6 @@ class ExportTab(QWidget):
         dlg = DocResultDialog(result, self)
         dlg.exec()
 
-        # Chain FDA download if pending
-        if self._pending_fda_download:
-            self._pending_fda_download = False
-            self._download_fda_docs()
-
     def _on_doc_error(self, error_msg):
         self.doc_progress.reset()
         self._enable_doc_buttons(True)
@@ -965,8 +915,6 @@ class ExportTab(QWidget):
             try:
                 from ctrdata_core import CtrdataBridge
                 export_df = self.app.current_data.copy()
-                if self._fda_match_done:
-                    export_df = self._add_fda_column(export_df)
                 filepath = CtrdataBridge.export_csv(export_df, filename)
                 QMessageBox.information(self, "导出成功", f"数据已导出到:\n{filepath}")
                 self.app.status.showMessage(f"已导出: {os.path.basename(filepath)}")
@@ -975,7 +923,6 @@ class ExportTab(QWidget):
 
     # ── Column width management ──
 
-    # Add "FDA审评资料" to column width rules
     _COL_WIDTH_RULES = [
         ("id", 120),
         ("trialid", 120),
@@ -992,7 +939,6 @@ class ExportTab(QWidget):
         ("trialpopulation", 180),
         ("samplesize", 80),
         ("numsites", 80),
-        ("fda审评资料", 100),
     ]
     _DEFAULT_COL_WIDTH = 130
 
@@ -1038,300 +984,3 @@ class ExportTab(QWidget):
         s.setValue(col_name, new_size)
         s.endGroup()
 
-    # ── FDA review document matching ──
-
-    @staticmethod
-    def _find_intervention_col(df: pd.DataFrame):
-        """Find the intervention column in a DataFrame, case-insensitive."""
-        for col in df.columns:
-            cl = col.lower()
-            if "intervention" in cl or cl == "protocolsection.armsinterventionsmodule.interventions":
-                return col
-        return None
-
-    @staticmethod
-    def _parse_intervention_string(val: str) -> list:
-        """Parse intervention field value to extract drug names.
-
-        Handles multiple formats from different registries:
-        - JSON array: [{"type":"Drug","name":"Pembrolizumab"},...]
-        - Pipe-separated: "Drug: Pembrolizumab | Drug: Placebo"
-        - Comma-separated: "Pembrolizumab, Placebo"
-        """
-        names = []
-        val = val.strip()
-        if not val:
-            return names
-
-        # Try JSON array format first
-        if val.startswith("["):
-            try:
-                import json
-                items = json.loads(val)
-                if isinstance(items, list):
-                    for item in items:
-                        if isinstance(item, dict):
-                            itype = item.get("type", "").lower()
-                            if itype in ("drug", "biological"):
-                                name = item.get("name", "").strip()
-                                if name:
-                                    names.append(name)
-                        elif isinstance(item, str) and item.strip():
-                            names.append(item.strip())
-                    return names
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        # Pipe-separated with type prefix: "Drug: Name | Drug: Name2"
-        if "|" in val:
-            for part in val.split("|"):
-                part = part.strip()
-                if ":" in part:
-                    _, name = part.split(":", 1)
-                    name = name.strip()
-                    if name:
-                        names.append(name)
-                elif part:
-                    names.append(part)
-            return names
-
-        # Comma-separated
-        if "," in val:
-            for part in val.split(","):
-                part = part.strip()
-                if part:
-                    names.append(part)
-            return names
-
-        # Single name
-        if val:
-            names.append(val)
-        return names
-
-    def _extract_unique_drug_names(self):
-        """Extract unique drug names from the extracted DataFrame.
-
-        Returns (drug_names_list, drug_to_row_indices_dict).
-        """
-        if self._full_df is None:
-            return [], {}
-
-        col = self._find_intervention_col(self._full_df)
-        if col is None:
-            return [], {}
-
-        drug_to_rows = {}
-        for idx, val in self._full_df[col].items():
-            if pd.isna(val):
-                continue
-            drug_names = self._parse_intervention_string(str(val))
-            for name in drug_names:
-                key = name.lower().strip()
-                if not key:
-                    continue
-                if key not in drug_to_rows:
-                    drug_to_rows[key] = []
-                drug_to_rows[key].append(idx)
-
-        return list(drug_to_rows.keys()), drug_to_rows
-
-    def _start_fda_match(self):
-        """Start FDA review document matching in background thread."""
-        drug_names, drug_to_rows = self._extract_unique_drug_names()
-        if not drug_names:
-            cols = list(self._full_df.columns) if self._full_df is not None else []
-            col_hint = ", ".join(cols[:15])
-            if len(cols) > 15:
-                col_hint += f", ... (共{len(cols)}列)"
-            QMessageBox.warning(
-                self, "提示",
-                f"未找到药物名称。\n\n"
-                f"请重新提取数据，系统将自动包含干预措施字段。\n\n"
-                f"当前列: {col_hint}"
-            )
-            return
-
-        self._fda_drug_to_rows = drug_to_rows
-        self._fda_cancelled = False
-        self.fda_match_btn.setEnabled(False)
-        self.fda_progress.start(len(drug_names))
-        self.fda_status_label.setText(f"准备匹配 {len(drug_names)} 种药物...")
-
-        def _worker():
-            from service.fda_service import FdaMatchService
-            svc = FdaMatchService()
-            try:
-                results = svc.match_drug_names(
-                    drug_names=drug_names,
-                    on_progress=lambda c, t, n: self._fda_match_progress.emit(c, t, n),
-                    is_cancelled=lambda: self._fda_cancelled,
-                )
-                self._fda_match_complete.emit(results)
-            except Exception as e:
-                self._fda_match_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _on_fda_match_progress(self, current, total, drug_name):
-        self.fda_progress.update_progress(current, total, f"匹配 {drug_name}")
-
-    def _on_fda_match_complete(self, results):
-        self._fda_match_results = results
-        self._fda_match_done = True
-        self.fda_match_btn.setEnabled(True)
-
-        # Count matched rows
-        matched_rows = set()
-        matched_count = 0
-        for drug_name, result in results.items():
-            if result.get("matched"):
-                matched_count += 1
-                for row_idx in self._fda_drug_to_rows.get(drug_name, []):
-                    matched_rows.add(row_idx)
-
-        self.fda_progress.finish(success=matched_count)
-
-        total_rows = len(self._full_df) if self._full_df is not None else 0
-        matched_drugs = sum(1 for r in results.values() if r.get("matched"))
-        self.fda_status_label.setText(
-            f"匹配完成: {len(matched_rows)}/{total_rows} 条记录匹配到 "
-            f"FDA审评资料（{matched_drugs}/{len(results)} 种药物）"
-        )
-
-        # Enable FDA download button and update all-docs text
-        has_docs = any(
-            r.get("matched") and r.get("review_docs")
-            for r in results.values()
-        )
-        self.doc_fda_btn.setEnabled(has_docs)
-        if has_docs:
-            self.doc_all_btn.setText("全部下载(含FDA)")
-
-        self.app.status.showMessage(
-            f"FDA匹配完成: {len(matched_rows)}/{total_rows} 条有审评资料"
-        )
-
-    def _on_fda_match_error(self, error_msg):
-        self.fda_match_btn.setEnabled(True)
-        self.fda_progress.reset()
-        self.fda_status_label.setText(f"匹配失败")
-        QMessageBox.critical(self, "FDA匹配失败", error_msg)
-
-    def _add_fda_column(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add 'FDA审评资料' and 'FDA审评资料链接' columns.
-
-        The link column stores TOC page URLs (.html/.cfm) which serve as
-        directory/index pages for the full review documents.
-        """
-        has_col = ["无"] * len(df)
-        url_col = [""] * len(df)
-        intervention_col = self._find_intervention_col(df)
-        if intervention_col and self._fda_match_results:
-            for idx, val in df[intervention_col].items():
-                if pd.isna(val):
-                    continue
-                drug_names = self._parse_intervention_string(str(val))
-                toc_urls = []
-                for name in drug_names:
-                    key = name.lower().strip()
-                    result = self._fda_match_results.get(key)
-                    if result and result.get("matched"):
-                        has_col[idx] = "有"
-                        for doc in result.get("review_docs", []):
-                            doc_url = doc.get("url", "")
-                            if doc_url and doc_url.lower().endswith((".html", ".cfm")):
-                                toc_urls.append(doc_url)
-                if toc_urls:
-                    # Deduplicate while preserving order
-                    seen = set()
-                    unique = []
-                    for u in toc_urls:
-                        if u not in seen:
-                            seen.add(u)
-                            unique.append(u)
-                    url_col[idx] = "; ".join(unique)
-        df = df.copy()
-        df["FDA审评资料"] = has_col
-        df["FDA审评资料链接"] = url_col
-        return df
-
-    # ── FDA document download ──
-
-    def _download_fda_docs(self):
-        """Download FDA review documents for matched trials."""
-        if not self._fda_match_done or not self._fda_match_results:
-            QMessageBox.warning(self, "提示", "请先匹配FDA审评资料")
-            return
-
-        docs_path = self.doc_path_input.text().strip()
-        if not docs_path:
-            QMessageBox.critical(self, "错误", "请指定文档保存路径")
-            return
-
-        save_dir = os.path.join(docs_path, "fda_reviews")
-
-        # Disable buttons during download
-        self._enable_doc_buttons(False)
-        self.doc_fda_btn.setEnabled(False)
-        self.doc_progress.start(100)
-        self.doc_progress.set_cancel_enabled(True)
-        self.doc_progress.cancelled.connect(self._cancel_doc_download)
-        self.doc_status.setText("正在准备FDA审评资料下载...")
-
-        def _worker():
-            from service.fda_service import FdaMatchService
-            svc = FdaMatchService()
-            try:
-                result = svc.download_review_docs(
-                    matched_results=self._fda_match_results,
-                    save_dir=save_dir,
-                    on_progress=lambda c, t, n: self._fda_doc_progress.emit(c, t, n),
-                    is_cancelled=lambda: self._fda_cancelled,
-                )
-                self._fda_doc_complete.emit(result)
-            except Exception as e:
-                self._fda_doc_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _on_fda_doc_progress(self, current, total, filename):
-        self.doc_progress.update_progress(current, total, f"FDA下载 {filename}")
-
-    def _on_fda_doc_complete(self, result):
-        try:
-            self.doc_progress.cancelled.disconnect(self._cancel_doc_download)
-        except RuntimeError:
-            pass
-        self._enable_doc_buttons(True)
-        self.doc_fda_btn.setEnabled(True)
-
-        success = result.get("success", [])
-        failed = result.get("failed", {})
-        fail_count = len(failed) if isinstance(failed, dict) else 0
-
-        self.doc_progress.finish(success=len(success), failed=fail_count)
-
-        self.doc_status.setText(
-            f"FDA审评资料下载完成: 成功 {len(success)}, 失败 {fail_count}"
-        )
-
-        if success or failed:
-            msg = QMessageBox(self)
-            msg.setWindowTitle("FDA审评资料下载完成")
-            lines = [f"成功下载: {len(success)} 个文件"]
-            if fail_count:
-                lines.append(f"失败: {fail_count} 个")
-                detail_lines = ["失败详情:"]
-                for url, err in list(failed.items())[:30]:
-                    detail_lines.append(f"  {url}: {err}")
-                msg.setDetailedText("\n".join(detail_lines))
-            msg.setText("\n".join(lines))
-            msg.setIcon(QMessageBox.Information if not fail_count else QMessageBox.Warning)
-            msg.exec()
-
-    def _on_fda_doc_error(self, error_msg):
-        self.doc_progress.reset()
-        self._enable_doc_buttons(True)
-        self.doc_fda_btn.setEnabled(True)
-        self.doc_status.setText("FDA审评资料下载失败")
-        QMessageBox.critical(self, "FDA下载失败", error_msg)

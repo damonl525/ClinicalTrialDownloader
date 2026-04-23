@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.3.0] - 2026-04-23
+
+### 新功能
+- **独立 FDA 标签页**：FDA 审评资料功能从原"提取与导出"标签页中独立出来，成为独立的第 4 个标签页，无需数据库或 R 环境，直接搜索 openFDA 并下载审评文档
+- **FDA 审评文档 TOC 解析**：使用 QWebEnginePage 加载 FDA TOC.html 页面，提取 pdfFiles JavaScript 变量精确确认存在的 PDF，取代盲猜 7-suffix 展开方式
+- **FDA 审评文档直接下载**：通过 QWebEngineProfile.downloadRequested 绕过 FDA Akamai CDN 的 bot 检测，支持批量下载审评 PDF
+- **下载进度条**：FDA 下载集成 ProgressPanel，显示进度、ETA、取消按钮
+- **保存路径输入框**：FDA 标签页常驻"保存到"路径输入 + 浏览按钮，默认路径与数据库路径一致，持久化到 QSettings
+- **文档类型英文显示**：表格中文档类型列改为显示原始英文名称（如 Medical Review、Statistical Review）
+
+### 改进
+- **下载限流策略**：随机 8-15 秒间隔模拟人类操作，连续 2 次失败后自动冷却 60 秒，单文件 150 秒超时
+- **TOC 解析重试**：首次加载失败或超时自动重试一次，超时从 20 秒提升到 40 秒
+- **右键菜单保留浏览器打开**：主按钮改为"批量下载"，右键菜单仍可单独"在浏览器中打开"
+- **所有 FDA 操作记录到运行日志**：搜索、TOC 解析、下载的每个步骤均有日志
+
+### 修复
+- 修复 URL 构建缺少路径前缀导致去重失败的问题
+- 修复重复的 `_on_search_error` 方法
+
 ## [1.2.0] - 2026-04-21
 
 ### 新功能

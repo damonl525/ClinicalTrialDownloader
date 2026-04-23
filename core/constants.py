@@ -11,7 +11,7 @@ import os
 # ================================================================
 APP_NAME = "临床试验数据下载器"
 APP_NAME_EN = "Clinical Trial Data Downloader"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 # ================================================================
 # 数据库
@@ -180,6 +180,49 @@ FDA_REVIEW_DOC_TYPES = {
     "Pharmacology Review(s)": "药理毒理审评",
     "Summary Review": "综述报告",
     "Other Review(s)": "其他审评",
+    "Review": "综合审评",
+}
+
+# URL suffixes for constructing review PDF URLs from TOC base.
+# Old drugs (pre-2017): separate discipline reviews (MedR, StatR, etc.)
+# New drugs (2017+): combined MultidisciplineR + OtherR
+FDA_REVIEW_SUFFIXES = [
+    ("MultidisciplineR", "Multidiscipline Review"),
+    ("OtherR", "Other Review"),
+    ("MedR", "Medical Review"),
+    ("StatR", "Statistical Review"),
+    ("PharmR", "Pharmacology Review"),
+    ("ClinPharmR", "Clinical Pharmacology Review"),
+    ("ChemR", "Chemistry Review"),
+]
+
+# Mapping from TOC page JavaScript pdfFiles keys to URL suffixes and labels.
+# Used by FdaTocParser to construct only confirmed PDF URLs.
+# Format: {js_key: (url_suffix, english_label, is_review_doc)}
+FDA_PDFFILES_MAP = {
+    # Review documents
+    "multidisciplineR": ("MultidisciplineR", "Multidiscipline Review", True),
+    "medR":             ("MedR",             "Medical Review", True),
+    "statR":            ("StatR",            "Statistical Review", True),
+    "pharmR":           ("PharmR",           "Pharmacology Review", True),
+    "chemR":            ("ChemR",            "Chemistry Review", True),
+    "clinPharmR":       ("ClinPharmR",       "Clinical Pharmacology Review", True),
+    "otherR":           ("OtherR",           "Other Review", True),
+    "sumR":             ("SumR",             "Summary Review", True),
+    "crossR":           ("CrossR",           "Cross Discipline Review", True),
+    "integratedR":      ("IntegratedR",      "Integrated Review", True),
+    "riskR":            ("RiskR",            "Risk Assessment", True),
+    "microR":           ("MicroR",           "Microbiology Review", True),
+    "nameR":            ("NameR",            "Naming Review", True),
+    # Administrative documents
+    "approv":           ("Approv",           "Approval Letter", False),
+    "lbl":              ("Lbl",              "Label", False),
+    "adminCorres":      ("AdminCorres",      "Administrative Correspondence", False),
+    "otherActionLtrs":  ("OtherActionLtrs",  "Other Action Letters", False),
+    "oeList":           ("OEList",           "OE List", False),
+    "memo":             ("Memo",             "Memorandum", False),
+    "rems":             ("Rems",             "REMS", False),
+    "rems1":            ("Rems1",            "REMS Supplement", False),
 }
 
 # ================================================================
@@ -201,3 +244,37 @@ R_ERROR_TRANSLATIONS = [
     (r"timeout", "操作超时，网络响应过慢，请稍后重试"),
     (r"Permission denied", "权限不足，无法写入目标路径"),
 ]
+
+# ================================================================
+# FDA Tab — search parameter dropdown options
+# ================================================================
+FDA_APPLICATION_TYPES = {
+    "全部": "",
+    "NDA (新药申请)": "NDA",
+    "BLA (生物制品许可)": "BLA",
+    "ANDA (简略新药申请)": "ANDA",
+}
+
+FDA_SEARCH_ROUTES = {
+    "全部": "",
+    "口服 (oral)": "oral",
+    "注射 (intravenous)": "intravenous",
+    "局部 (topical)": "topical",
+    "吸入 (inhalation)": "inhalation",
+    "皮下 (subcutaneous)": "subcutaneous",
+    "肌肉 (intramuscular)": "intramuscular",
+}
+
+FDA_REVIEW_PRIORITIES = {
+    "全部": "",
+    "标准 (Standard)": "Standard",
+    "优先 (Priority)": "Priority",
+}
+
+FDA_SUBMISSION_CLASSES = {
+    "全部": "",
+    "原创新药 (N)": "N",
+    "补充申请 (S)": "S",
+    "有效性补充 (SE)": "SE",
+    "制造补充 (SL)": "SL",
+}
