@@ -15,10 +15,11 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 - ISRCTN
 - EU CTIS
 
-### Three-Step Workflow
+### Four-Tab Workflow
 1. **Database** -- Connect to SQLite, view query history, incremental updates
 2. **Search & Download** -- Multi-condition search, paste URL, or download by trial ID; multi-register search with result count preview
 3. **Extract & Export** -- Field extraction with concept functions, multi-dimensional filtering, CSV export, document download
+4. **FDA Review** -- Standalone FDA review document search and download (independent of trial data, no database required)
 
 ### Smart Search
 - Multi-condition form search (keyword, phase, recruitment status, population)
@@ -45,10 +46,11 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 - Document type filtering (protocol, SAP, or all)
 
 ### FDA Review Documents
-- Standalone FDA tab: search openFDA drugsfda endpoint by drug name, date, manufacturer, etc.
-- TOC page parsing via QWebEnginePage: extracts pdfFiles JS variable to confirm which PDFs exist
-- Direct PDF download via QWebEngineProfile: bypasses FDA Akamai CDN bot detection
-- Rate-limited downloads with random delays, automatic retry, and cooldown on failures
+- Standalone FDA tab — independent of trial data, no database or R environment required
+- Search openFDA drugsfda endpoint by drug name, date range, manufacturer, route, application type, etc.
+- TOC page parsing via QWebEnginePage: extracts pdfFiles JavaScript variable to confirm which PDFs actually exist (replaces blind URL guessing)
+- Direct PDF download via QWebEngineProfile: bypasses FDA Akamai CDN bot detection using Chromium browser engine
+- Rate-limited downloads with random 8-15s delays, automatic retry, and 60s cooldown after consecutive failures
 - Right-click context menu for opening individual documents in browser
 
 ### Progress & Feedback
@@ -60,7 +62,6 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 ### Data Table
 - Sortable columns with persisted widths
 - Right-click context menu (copy cell, row, selection, export selected)
-- FDA review document matching and download
 
 ### UI & Settings
 - Dark/Light/System theme switching
@@ -168,44 +169,7 @@ python build.py --release  # Release mode (full deps)
 | Database | SQLite + nodbi | Lightweight storage |
 | Tests | pytest | Unit test suite |
 
-## Changelog
-
-### v1.3.0 (2026-04-23) -- FDA Review Document Download
-- **TOC page parsing**: QWebEnginePage loads FDA TOC.html, extracts pdfFiles JS variable for precise PDF confirmation
-- **Direct PDF download**: QWebEngineProfile.downloadRequested bypasses FDA Akamai CDN bot detection
-- **Rate-limiting**: Random 8-15s delays, auto-retry on failure, 60s cooldown after consecutive failures
-- **Download progress**: ProgressPanel with ETA, cancel button, save path input with QSettings persistence
-- **Document type display**: Original English names (Medical Review, Statistical Review, etc.)
-- **Full logging**: All FDA operations (search, TOC parse, download) logged to runtime log dialog
-
-### v1.2.0 (2026-04-21) -- UX Efficiency Overhaul
-- **ProgressPanel**: Unified progress widget with ETA, detail line, cancel support across all tabs
-- **Seamless pipeline**: Auto-navigate to Export tab + auto-extract after search download
-- **Batch document download**: Single R session for N trials, eliminates per-trial cold-start overhead
-- **Streaming latency**: R output poll interval reduced from 5s to 0.5s
-- **Resume UI**: Detects interrupted downloads and prompts user to continue or restart
-- **Timeout setting**: Per-trial doc timeout now reads from Settings (was hardcoded)
-- **Download confirmation**: Mandatory confirmation dialog before any document download
-- **Fix**: Duplicate cancel buttons in SearchTab and ExportTab
-- **Fix**: Extraction progress bar keeps spinning after completion
-- **Fix**: Extracted data loss from list-type columns
-
-### v1.1.0 -- Document Download & Polish
-- Document download with resume/checkpoint support
-- FDA review document matching and download
-- Runtime log viewer
-- Settings dialog (theme, paths, timeout)
-- Table context menu (copy cell, row, selection, export selected)
-- Collapsible card layout
-
-### v1.0.0 -- Initial Release
-- PySide6 GUI with three-tab workflow (Database, Search, Export)
-- Multi-register support (CTGOV2, EUCTR, ISRCTN, CTIS)
-- Smart search with multi-condition form, URL paste, trial ID download
-- Post-download filtering (phase, status, date, condition, intervention)
-- CSV export
-- Dark/Light/System theme
-- R environment auto-detection
+For detailed changelog, see [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

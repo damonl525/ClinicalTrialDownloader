@@ -7,6 +7,7 @@
 ## [1.3.0] - 2026-04-23
 
 ### 新功能
+- **独立 FDA 标签页**：FDA 审评资料功能从原"提取与导出"标签页中独立出来，成为独立的第 4 个标签页，无需数据库或 R 环境，直接搜索 openFDA 并下载审评文档
 - **FDA 审评文档 TOC 解析**：使用 QWebEnginePage 加载 FDA TOC.html 页面，提取 pdfFiles JavaScript 变量精确确认存在的 PDF，取代盲猜 7-suffix 展开方式
 - **FDA 审评文档直接下载**：通过 QWebEngineProfile.downloadRequested 绕过 FDA Akamai CDN 的 bot 检测，支持批量下载审评 PDF
 - **下载进度条**：FDA 下载集成 ProgressPanel，显示进度、ETA、取消按钮
