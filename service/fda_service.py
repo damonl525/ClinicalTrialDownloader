@@ -19,6 +19,7 @@ from core.constants import (
     FDA_API_BASE,
     FDA_API_RATE_LIMIT,
     FDA_REVIEW_DOC_TYPES,
+    FDA_REVIEW_SUFFIXES,
 )
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ class FdaSearchService:
         total = data.get("meta", {}).get("results", {}).get("total", 0)
         results = data.get("results", [])
         rows = self._flatten_results(results)
+        rows = self.expand_toc_urls(rows)
 
         return {"rows": rows, "total": total}
 
@@ -221,6 +223,62 @@ class FdaSearchService:
                     })
 
         return rows
+
+    def expand_toc_urls(self, rows: List[dict]) -> List[dict]:
+        """Expand TOC.html URLs into individual review PDF URL rows.
+
+        For each row with a TOC URL, construct all possible review PDF URLs
+        using the suffix mapping. Direct PDF rows are kept as-is.
+
+        Deduplicates: skips constructed URLs that already exist as direct PDFs
+        or that were generated from a previously-seen TOC base.
+        """
+        # Collect existing direct PDF URLs
+        direct_urls = set()
+        for row in rows:
+            url = row.get("doc_url", "")
+            if not url.lower().endswith((".html", ".cfm")):
+                direct_urls.add(url)
+
+        expanded = []
+        seen_toc_bases = set()
+        all_urls = set(direct_urls)
+
+        for row in rows:
+            url = row.get("doc_url", "")
+
+            if url.lower().endswith((".html", ".cfm")):
+                # Extract base URL (everything before TOC.html)
+                toc_idx = url.lower().rfind("toc.html")
+                if toc_idx == -1:
+                    expanded.append(row)
+                    continue
+
+                base = url[:toc_idx]
+                if base in seen_toc_bases:
+                    continue
+                seen_toc_bases.add(base)
+
+                for suffix, cn_label in FDA_REVIEW_SUFFIXES:
+                    pdf_url = f"{base}{suffix}.pdf"
+                    if pdf_url in all_urls:
+                        continue
+                    all_urls.add(pdf_url)
+
+                    expanded.append({
+                        "brand_name": row["brand_name"],
+                        "generic_name": row["generic_name"],
+                        "application_number": row["application_number"],
+                        "manufacturer_name": row["manufacturer_name"],
+                        "submission_type": row["submission_type"],
+                        "submission_status_date": row["submission_status_date"],
+                        "doc_type": cn_label,
+                        "doc_url": pdf_url,
+                    })
+            else:
+                expanded.append(row)
+
+        return expanded
 
     # ------------------------------------------------------------------
     # Download

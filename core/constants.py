@@ -183,6 +183,19 @@ FDA_REVIEW_DOC_TYPES = {
     "Review": "综合审评",
 }
 
+# URL suffixes for constructing review PDF URLs from TOC base.
+# Old drugs (pre-2017): separate discipline reviews (MedR, StatR, etc.)
+# New drugs (2017+): combined MultidisciplineR + OtherR
+FDA_REVIEW_SUFFIXES = [
+    ("MultidisciplineR", "综合审评"),
+    ("OtherR", "其他审评"),
+    ("MedR", "医学审评"),
+    ("StatR", "统计审评"),
+    ("PharmR", "药理毒理审评"),
+    ("ClinPharmR", "临床药理审评"),
+    ("ChemR", "化学审评"),
+]
+
 # ================================================================
 # R 错误中文翻译
 # ================================================================

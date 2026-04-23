@@ -333,7 +333,13 @@ class FdaTab(QWidget):
         self.table.set_data(columns, data)
         self._all_rows = rows  # store for browser open
         self._update_page_label()
-        self.result_label.setText(f"共 {self._current_total} 条结果")
+        shown = len(rows)
+        if shown != self._current_total:
+            self.result_label.setText(
+                f"共 {self._current_total} 条API结果，展开为 {shown} 条审评文档"
+            )
+        else:
+            self.result_label.setText(f"共 {shown} 条结果")
 
     def _on_search_error(self, error_msg):
         self.search_btn.setEnabled(True)
