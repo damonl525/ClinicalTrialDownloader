@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-FDA Tab — standalone openFDA search and review document download.
+FDA Tab — standalone openFDA search and review document browsing.
 No dependency on database, CtrdataBridge, or trial data.
+Documents are opened in the user's browser (FDA blocks automated downloads).
 """
 
 import logging
-import os
 import threading
 import webbrowser
 
@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QComboBox,
     QMessageBox,
-    QFileDialog,
     QDateEdit,
     QMenu,
 )
@@ -28,7 +27,6 @@ from PySide6.QtCore import Qt, Signal, QDate
 
 from ui.widgets.card import CollapsibleCard
 from ui.widgets.filter_table import FilterTableView
-from ui.widgets.progress import ProgressPanel
 from ui.theme import SPACING
 from core.constants import (
     FDA_APPLICATION_TYPES,
@@ -42,20 +40,15 @@ logger = logging.getLogger(__name__)
 
 
 class FdaTab(QWidget):
-    """Standalone FDA review document search and download tab."""
+    """Standalone FDA review document search and browsing tab."""
 
     # Signals for thread-safe communication
     _search_complete = Signal(dict)
     _search_error = Signal(str)
-    _download_progress = Signal(int, int, str)
-    _download_complete = Signal(dict)
-    _download_error = Signal(str)
 
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
-        self._service = None
-        self._cancel_flag = False
         self._current_params = {}
         self._current_skip = 0
         self._current_total = 0
@@ -71,9 +64,6 @@ class FdaTab(QWidget):
         # Signal connections
         self._search_complete.connect(self._on_search_complete)
         self._search_error.connect(self._on_search_error)
-        self._download_progress.connect(self._on_download_progress)
-        self._download_complete.connect(self._on_download_complete)
-        self._download_error.connect(self._on_download_error)
 
         # Right-click context menu on table
         self.table.context_menu_requested.connect(self._on_table_context_menu)
@@ -230,31 +220,14 @@ class FdaTab(QWidget):
 
         action_row.addStretch()
 
-        action_row.addWidget(QLabel("保存目录:"))
-        self.save_dir_input = QLineEdit()
-        self.save_dir_input.setPlaceholderText("选择保存目录")
-        self.save_dir_input.setReadOnly(True)
-        action_row.addWidget(self.save_dir_input, stretch=1)
-
-        self.browse_btn = QPushButton("浏览...")
-        self.browse_btn.clicked.connect(self._browse_save_dir)
-        action_row.addWidget(self.browse_btn)
-
-        self.download_btn = QPushButton("批量下载")
-        self.download_btn.setObjectName("primary")
-        self.download_btn.setEnabled(False)
-        self.download_btn.clicked.connect(self._start_download)
-        action_row.addWidget(self.download_btn)
+        self.open_browser_btn = QPushButton("批量打开浏览器")
+        self.open_browser_btn.setObjectName("primary")
+        self.open_browser_btn.setEnabled(False)
+        self.open_browser_btn.setToolTip("在浏览器中打开选中的审评文档（FDA 封锁自动化下载）")
+        self.open_browser_btn.clicked.connect(self._open_in_browser)
+        action_row.addWidget(self.open_browser_btn)
 
         parent_layout.addLayout(action_row)
-
-        # Progress panel
-        self.progress = ProgressPanel()
-        parent_layout.addWidget(self.progress)
-        self.progress.cancelled.connect(self._cancel_download)
-
-        # Load saved directory from QSettings
-        self._load_save_dir()
 
     # ================================================================
     # Search logic
@@ -358,7 +331,7 @@ class FdaTab(QWidget):
             ])
 
         self.table.set_data(columns, data)
-        self._all_rows = rows  # store for download
+        self._all_rows = rows  # store for browser open
         self._update_page_label()
         self.result_label.setText(f"共 {self._current_total} 条结果")
 
@@ -420,101 +393,41 @@ class FdaTab(QWidget):
         self.submission_class_combo.setCurrentIndex(0)
 
     # ================================================================
-    # Download logic
+    # Action logic
     # ================================================================
 
     def _update_selected_count(self):
         count = len(self.table.checked_rows())
         self.selected_label.setText(f"已选 {count} 条")
-        self.download_btn.setEnabled(count > 0)
+        self.open_browser_btn.setEnabled(count > 0)
 
-    def _browse_save_dir(self):
-        from ui.app import get_settings
-        current = self.save_dir_input.text()
-        path = QFileDialog.getExistingDirectory(self, "选择保存目录", current)
-        if path:
-            self.save_dir_input.setText(path)
-            s = get_settings()
-            s.setValue("fda/save_dir", path)
-
-    def _load_save_dir(self):
-        from ui.app import get_settings
-        s = get_settings()
-        saved = s.value("fda/save_dir", "")
-        if saved and os.path.isdir(saved):
-            self.save_dir_input.setText(saved)
-
-    def _start_download(self):
-        save_dir = self.save_dir_input.text().strip()
-        if not save_dir:
-            QMessageBox.warning(self, "提示", "请先选择保存目录")
-            return
-
+    def _open_in_browser(self):
+        """Open selected document URLs in browser tabs."""
         checked = self.table.checked_rows()
         if not checked:
             return
 
         docs = [self._all_rows[i] for i in checked if i < len(self._all_rows)]
-        if not docs:
+        urls = [d.get("doc_url", "") for d in docs if d.get("doc_url")]
+        if not urls:
+            QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
             return
 
-        # Confirm
-        msg = (
-            f"即将下载 {len(docs)} 个审评文档。\n"
-            f"保存到: {save_dir}\n\n确认开始下载？"
-        )
-        if QMessageBox.question(self, "确认下载", msg) != QMessageBox.Yes:
-            return
+        # Confirm before opening many tabs
+        if len(urls) > 3:
+            msg = (
+                f"即将在浏览器中打开 {len(urls)} 个标签页。\n\n"
+                f"提示: FDA 审评文档为 PDF 格式，可在浏览器中直接保存。\n\n确认打开？"
+            )
+            if QMessageBox.question(self, "确认打开", msg) != QMessageBox.Yes:
+                return
 
-        self._cancel_flag = False
-        self.download_btn.setEnabled(False)
-        self.progress.start(len(docs))
-        self.progress.set_cancel_enabled(True)
+        opened = 0
+        for url in urls:
+            if webbrowser.open(url):
+                opened += 1
 
-        def _worker():
-            try:
-                from service.fda_service import FdaSearchService
-                svc = FdaSearchService()
-                result = svc.download_docs(
-                    docs, save_dir,
-                    on_progress=lambda c, t, n: self._download_progress.emit(c, t, n),
-                    is_cancelled=lambda: self._cancel_flag,
-                )
-                self._download_complete.emit(result)
-            except Exception as e:
-                self._download_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    def _on_download_progress(self, current, total, filename):
-        self.progress.update_progress(current, total, f"下载 {filename}")
-
-    def _on_download_complete(self, result):
-        success = result.get("success", [])
-        failed = result.get("failed", [])
-        self.progress.finish(
-            success=len(success),
-            failed=len(failed),
-        )
-        self.download_btn.setEnabled(True)
-
-        if failed:
-            msg = f"下载完成: 成功 {len(success)} 个，失败 {len(failed)} 个\n\n"
-            for f in failed[:10]:
-                msg += f"  - {f.get('filename', '未知')}: {f.get('error', '未知错误')}\n"
-            if len(failed) > 10:
-                msg += f"  ... 还有 {len(failed) - 10} 个失败"
-            QMessageBox.warning(self, "下载完成（部分失败）", msg)
-        else:
-            self.app.status.showMessage(f"FDA审评资料下载完成: {len(success)} 个文件")
-
-    def _on_download_error(self, error_msg):
-        self.progress.reset()
-        self.download_btn.setEnabled(True)
-        QMessageBox.critical(self, "下载失败", error_msg)
-
-    def _cancel_download(self):
-        self._cancel_flag = True
+        self.app.status.showMessage(f"已在浏览器中打开 {opened} 个审评文档")
 
     # ================================================================
     # Right-click context menu

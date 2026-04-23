@@ -172,6 +172,7 @@ class FdaSearchService:
         Only includes documents whose type matches FDA_REVIEW_DOC_TYPES or "Review".
         """
         rows = []
+        seen_urls = set()
         review_keywords = [k.lower() for k in FDA_REVIEW_DOC_TYPES]
 
         for result in results:
@@ -202,6 +203,11 @@ class FdaSearchService:
                     is_review = is_review or doc_type == "Review"
                     if not is_review:
                         continue
+
+                    # Deduplicate by URL
+                    if doc_url in seen_urls:
+                        continue
+                    seen_urls.add(doc_url)
 
                     rows.append({
                         "brand_name": brand_name,
