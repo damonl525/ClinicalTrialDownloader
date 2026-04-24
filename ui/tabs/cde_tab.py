@@ -40,7 +40,6 @@ class CdeTab(QWidget):
     # Signals
     _scrape_complete = Signal(list)
     _scrape_error = Signal(str)
-    _detail_parse_complete = Signal(dict)
     _download_complete = Signal(dict)
 
     def __init__(self, app, parent=None):
@@ -62,7 +61,6 @@ class CdeTab(QWidget):
         # Signal connections
         self._scrape_complete.connect(self._on_scrape_complete)
         self._scrape_error.connect(self._on_scrape_error)
-        self._detail_parse_complete.connect(self._on_detail_parse_complete)
         self._download_complete.connect(self._on_download_complete)
 
         # Right-click context menu
