@@ -34,11 +34,11 @@ class CdeListScraper(QObject):
     scrape_progress = Signal(int, int)       # current_page, total_pages
     detail_parsed = Signal(str, dict)        # detail_url, {pdf_urls: [...], meta: {...}}
     detail_error = Signal(str, str)         # detail_url, error_msg
+    detail_complete = Signal(dict)           # {url: data} results summary
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._profile = QWebEngineProfile.defaultProfile()
-        self._pending_pages: List[str] = []
         self._all_rows: List[dict] = []
         self._current_page = 0
         self._total_pages = 0
@@ -81,7 +81,6 @@ class CdeListScraper(QObject):
     def cancel(self):
         """Abort all pending operations."""
         self._cancelled = True
-        self._pending_pages.clear()
         if self._active_page:
             self._active_page.stop()
             self._active_page.deleteLater()
@@ -412,5 +411,6 @@ class CdeListScraper(QObject):
 
         if not self._active_detail_pages and not self._detail_queue:
             logger.info("CDE详情页解析全部完成: %d 个", len(self._detail_results))
+            self.detail_complete.emit(dict(self._detail_results))
         else:
             self._start_next_detail_batch()
