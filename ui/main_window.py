@@ -20,6 +20,7 @@ from ui.tabs.database_tab import DatabaseTab
 from ui.tabs.search_tab import SearchTab
 from ui.tabs.export_tab import ExportTab
 from ui.tabs.fda_tab import FdaTab
+from ui.tabs.cde_tab import CdeTab
 from ui.app import get_theme_mode, set_theme_mode, resolve_theme, apply_theme
 from core.logger import setup_file_logging, remove_file_logging
 from core.constants import APP_NAME, APP_VERSION
@@ -217,6 +218,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.export_tab, "提取与导出")
         self.fda_tab = FdaTab(self)
         self.tabs.addTab(self.fda_tab, "FDA审评资料")
+        self.cde_tab = CdeTab(self)
+        self.tabs.addTab(self.cde_tab, "CDE上市药品")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
 

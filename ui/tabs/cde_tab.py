@@ -61,7 +61,7 @@ class CdeTab(QWidget):
         # Signal connections
         self._scrape_complete.connect(self._on_scrape_complete)
         self._scrape_error.connect(self._on_scrape_error)
-        self._download_complete.connect(self._on_download_complete)
+        self._download_complete.connect(self._on_pdf_download_complete)
 
         # Right-click context menu
         self.table.context_menu_requested.connect(self._on_table_context_menu)
