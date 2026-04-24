@@ -841,6 +841,9 @@ class SearchTab(QWidget):
         elapsed = ctx.get("elapsed", 600)
         register = ctx.get("register", "")
 
+        # Disable progress cancel button to prevent double-action
+        self.progress_panel.set_cancel_enabled(False)
+
         dlg = QMessageBox(self)
         dlg.setWindowTitle("下载超时")
         dlg.setIcon(QMessageBox.Warning)
@@ -867,6 +870,8 @@ class SearchTab(QWidget):
         clicked = dlg.clickedButton()
         if clicked == continue_btn:
             ctx["choice"] = "continue"
+            # Re-enable cancel for next potential timeout
+            self.progress_panel.set_cancel_enabled(True)
         elif clicked == skip_btn:
             ctx["choice"] = "skip"
         else:

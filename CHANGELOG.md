@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.0] - 2026-04-24
+
+### 新功能
+- **CDE 上市药品信息标签页**：新增第 5 个标签页，直接搜索 CDE（国家药监局药审中心）上市药品目录，支持关键词搜索和日期/类型筛选
+- **CDE 审评文档下载**：支持批量下载审评报告和说明书 PDF，通过 QWebEngine 绕过瑞数 WAF
+- **CDE 客户端筛选**：支持日期范围、药品类型、申请类型、注册分类等客户端筛选条件
+
+### 改进
+- CDE 日期筛选字段名修正：API 返回 `createddate`（双 d），修正后日期筛选功能正常
+- 详情页加载等待时间从 3 秒增加到 5 秒，附件提取增加重试机制（最多 3 次，每次间隔 3 秒）
+- 下载器复用单个 QWebEnginePage 保持 WAF 会话，用 `_active_downloads` 字典追踪下载状态
+
+### 修复
+- 修复 CDE 详情页 PDF 链接提取失败：原 JS 查找 `a[href*=".pdf"]` 但 CDE 详情页附件为 `a.textLink` 元素，需读取 `data-fileid`/`data-acceptid` 属性构建下载 URL
+- 修复 `_detail_pdf_map` 键不匹配：统一用 detail_url 作 key
+- 修复 URL 分类逻辑：使用 scraper 返回的 doc_type 字段而非 URL 内容过滤
+- 修复 CDE PDF 下载器每次创建新 QWebEnginePage 导致第二次下载失败
+- 修复 `_start_pdf_downloads` 双重调用导致下载量翻倍
+- 修复代码中重复的 `docs.append()` 块导致每个文件被添加两次到下载队列
+
 ## [1.3.0] - 2026-04-23
 
 ### 新功能

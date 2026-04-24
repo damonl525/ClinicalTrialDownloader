@@ -7,7 +7,7 @@ CDE Tab — CDE上市药品信息搜索、爬取和 PDF 下载。
 
 import logging
 import os
-import threading
+import re
 import webbrowser
 
 logger = logging.getLogger(__name__)
@@ -30,8 +30,6 @@ from core.constants import (
     CDE_APPLY_TYPES,
     CDE_REG_CLASSES,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class CdeTab(QWidget):
@@ -286,28 +284,25 @@ class CdeTab(QWidget):
             )
             return
 
-        def _worker():
-            try:
-                from service.cde_scraper import CdeListScraper
-                scraper = CdeListScraper(self)
-                scraper.page_parsed.connect(self._on_page_parsed)
-                scraper.scrape_complete.connect(self._scrape_complete.emit)
-                scraper.scrape_error.connect(self._scrape_error.emit)
-                scraper.scrape_progress.connect(self._on_scrape_progress)
-                self._scraper = scraper
-                scraper.scrape(
-                    keyword=params.get("keyword", ""),
-                    date_from=params.get("date_from", ""),
-                    date_to=params.get("date_to", ""),
-                    drug_type=params.get("drug_type", ""),
-                    apply_type=params.get("apply_type", ""),
-                    reg_class=params.get("reg_class", ""),
-                    scrape_all=params.get("scrape_all", False),
-                )
-            except Exception as e:
-                self._scrape_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
+        try:
+            from service.cde_scraper import CdeListScraper
+            scraper = CdeListScraper(self)
+            scraper.page_parsed.connect(self._on_page_parsed)
+            scraper.scrape_complete.connect(self._scrape_complete.emit)
+            scraper.scrape_error.connect(self._scrape_error.emit)
+            scraper.scrape_progress.connect(self._on_scrape_progress)
+            self._scraper = scraper
+            scraper.scrape(
+                keyword=params.get("keyword", ""),
+                date_from=params.get("date_from", ""),
+                date_to=params.get("date_to", ""),
+                drug_type=params.get("drug_type", ""),
+                apply_type=params.get("apply_type", ""),
+                reg_class=params.get("reg_class", ""),
+                scrape_all=params.get("scrape_all", False),
+            )
+        except Exception as e:
+            self._scrape_error.emit(str(e))
 
     def _on_page_parsed(self, current_page: int, total_pages: int, rows: list):
         """Handle individual page parsed — update table."""
@@ -448,36 +443,40 @@ class CdeTab(QWidget):
         self._download_save_dir = save_dir
         self._detail_pdf_map = {}
 
-        def _worker():
-            try:
-                from service.cde_scraper import CdeListScraper
-                scraper = CdeListScraper(self)
-                scraper.detail_parsed.connect(self._on_detail_parsed)
-                scraper.detail_error.connect(self._on_detail_error)
-                scraper.parse_detail_pages(detail_urls)
-            except Exception as e:
-                self._scrape_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
+        try:
+            from service.cde_scraper import CdeListScraper
+            scraper = CdeListScraper(self)
+            scraper.detail_parsed.connect(self._on_detail_parsed)
+            scraper.detail_error.connect(self._on_detail_error)
+            scraper.detail_complete.connect(self._on_detail_parse_complete)
+            self._detail_scraper = scraper
+            scraper.parse_detail_pages(detail_urls)
+        except Exception as e:
+            self._scrape_error.emit(str(e))
 
     def _on_detail_parsed(self, detail_url: str, data: dict):
-        """Handle detail page parsed — extract accept_id from URL and store PDF links."""
-        import re
-        match = re.search(r'acceptId=([A-Z0-9]+)', detail_url)
-        accept_id = match.group(1) if match else detail_url
+        """Handle detail page parsed — store classified attachment info keyed by detail_url."""
+        attachments = data.get("attachments", [])
 
-        pdf_urls = data.get("pdf_urls", [])
-        review_urls = [u for u in pdf_urls if "reviewReport" in u.lower() or "审评报告" in u]
-        instr_urls = [u for u in pdf_urls if "instructions" in u.lower() or "说明书" in u]
+        # Classify by doc_type from scraper
+        review_url = ""
+        instr_url = ""
+        for att in attachments:
+            if att.get("doc_type") == "review_report" and not review_url:
+                review_url = att.get("url", "")
+            elif att.get("doc_type") == "instructions" and not instr_url:
+                instr_url = att.get("url", "")
 
-        self._detail_pdf_map[accept_id] = {
-            "review_report": review_urls[0] if review_urls else "",
-            "instructions": instr_urls[0] if instr_urls else "",
+        self._detail_pdf_map[detail_url] = {
+            "review_report": review_url,
+            "instructions": instr_url,
         }
 
         done = len(self._detail_pdf_map)
         total = len(self._download_rows)
         self.result_label.setText(f"正在解析详情页 ({done}/{total})...")
+        logger.info("CDE详情页解析: %s — 审评报告=%s, 说明书=%s",
+                     detail_url, bool(review_url), bool(instr_url))
 
         if done >= total:
             self._start_pdf_downloads()
@@ -485,10 +484,7 @@ class CdeTab(QWidget):
     def _on_detail_error(self, detail_url: str, error: str):
         """Handle detail page parse error."""
         logger.warning("CDE详情页解析失败: %s — %s", detail_url, error)
-        import re
-        match = re.search(r'acceptId=([A-Z0-9]+)', detail_url)
-        accept_id = match.group(1) if match else detail_url
-        self._detail_pdf_map[accept_id] = {"review_report": "", "instructions": ""}
+        self._detail_pdf_map[detail_url] = {"review_report": "", "instructions": ""}
 
         done = len(self._detail_pdf_map)
         total = len(self._download_rows)
@@ -497,13 +493,23 @@ class CdeTab(QWidget):
         if done >= total:
             self._start_pdf_downloads()
 
+    def _on_detail_parse_complete(self, results: dict):
+        """Handle all detail pages parsed — start PDF downloads."""
+        logger.info("CDE详情页解析全部完成: %d 个", len(results))
+        self._start_pdf_downloads()
+
     def _start_pdf_downloads(self):
         """Build PDF download queue and start CdePdfDownloader."""
+        # Guard against double-call (from _on_detail_parsed + _on_detail_parse_complete)
+        if self._pdf_downloader is not None:
+            return
+
         docs = []
         for row in self._download_rows:
-            accept_id = row.get("accept_id", "")
+            detail_url = row.get("detail_url", "")
             drug_name = row.get("drug_name", "")
-            pdf_info = self._detail_pdf_map.get(accept_id, {})
+            accept_id = row.get("accept_id", "")
+            pdf_info = self._detail_pdf_map.get(detail_url, {})
 
             review_url = pdf_info.get("review_report", "")
             if review_url:
@@ -513,6 +519,8 @@ class CdeTab(QWidget):
                     "accept_id": accept_id,
                     "doc_type": "审评报告",
                 })
+            else:
+                logger.info("CDE: 无审评报告URL — %s (detail_url=%s)", drug_name, detail_url)
 
             instr_url = pdf_info.get("instructions", "")
             if instr_url:
@@ -522,6 +530,8 @@ class CdeTab(QWidget):
                     "accept_id": accept_id,
                     "doc_type": "说明书",
                 })
+            else:
+                logger.info("CDE: 无说明书URL — %s (detail_url=%s)", drug_name, detail_url)
 
         if not docs:
             self.search_btn.setEnabled(True)
@@ -565,6 +575,7 @@ class CdeTab(QWidget):
     def _on_pdf_download_complete(self, results: dict):
         self.download_btn.setEnabled(True)
         self.search_btn.setEnabled(True)
+        self._pdf_downloader = None  # Reset guard for next download batch
 
         try:
             self.download_progress.cancelled.disconnect(self._cancel_download)

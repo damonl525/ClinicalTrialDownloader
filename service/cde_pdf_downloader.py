@@ -15,7 +15,7 @@ import logging
 import os
 import random
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtWebEngineCore import (
@@ -27,12 +27,18 @@ from PySide6.QtWebEngineCore import (
 
 logger = logging.getLogger(__name__)
 
+from core.constants import (
+    CDE_DOWNLOAD_TIMEOUT,
+    CDE_DOWNLOAD_DELAY_MIN,
+    CDE_DOWNLOAD_DELAY_MAX,
+)
+
 # Timeout per file download (seconds)
-_DOWNLOAD_TIMEOUT = 60
+_DOWNLOAD_TIMEOUT = CDE_DOWNLOAD_TIMEOUT
 
 # Base delay between downloads (ms). Random jitter added.
-_DOWNLOAD_DELAY_MIN = 5000   # 5 seconds
-_DOWNLOAD_DELAY_MAX = 10000  # 10 seconds
+_DOWNLOAD_DELAY_MIN = CDE_DOWNLOAD_DELAY_MIN * 1000   # seconds → ms
+_DOWNLOAD_DELAY_MAX = CDE_DOWNLOAD_DELAY_MAX * 1000    # seconds → ms
 
 # Cooldown after consecutive failures (ms)
 _COOLDOWN_DELAY = 60000  # 60 seconds
@@ -63,6 +69,8 @@ class CdePdfDownloader(QObject):
     Disables the built-in PDF viewer so that navigating to a PDF URL
     triggers a download instead of rendering.
 
+    Reuses a single QWebEnginePage for all downloads to maintain WAF session.
+
     Rate-limiting strategy:
     - Random delay (5-10s) between downloads to mimic human behavior
     - Automatic cooldown (60s) after consecutive failures
@@ -79,7 +87,7 @@ class CdePdfDownloader(QObject):
             QWebEngineSettings.WebAttribute.PdfViewerEnabled, False
         )
 
-        self._queue: List[dict] = []  # list of {url, drug_name, accept_id, doc_type}
+        self._queue: List[dict] = []
         self._save_dir = ""
         self._results = {"success": [], "failed": []}
         self._total = 0
@@ -92,6 +100,8 @@ class CdePdfDownloader(QObject):
         self._timeout_timer: Optional[QTimer] = None
         self._current_retry = 0
         self._consecutive_failures = 0
+        # Track active downloads by download object to avoid state confusion
+        self._active_downloads: Dict[int, str] = {}  # id(download) -> filename
 
     def download(self, docs: List[dict], save_dir: str):
         """Start downloading PDFs sequentially.
@@ -110,6 +120,12 @@ class CdePdfDownloader(QObject):
         self._current_retry = 0
         self._consecutive_failures = 0
         self._cancelled = False
+        self._active_downloads = {}
+
+        # Create a single reusable page
+        if self._page:
+            self._page.deleteLater()
+        self._page = QWebEnginePage(self._profile, self)
 
         logger.info(
             "开始下载CDE审评文档: %d 个文件, 保存到 %s",
@@ -174,24 +190,22 @@ class CdePdfDownloader(QObject):
             self._advance()
             return
 
-        # Clean up previous page
-        if self._page:
-            self._page.deleteLater()
-
-        self._page = QWebEnginePage(self._profile, self)
-
-        # Timeout timer
+        # Reset timeout timer
         if self._timeout_timer:
-            self._timeout_timer.deleteLater()
-        self._timeout_timer = QTimer(self)
-        self._timeout_timer.setSingleShot(True)
-        self._timeout_timer.timeout.connect(self._on_timeout)
+            self._timeout_timer.stop()
+        else:
+            self._timeout_timer = QTimer(self)
+            self._timeout_timer.setSingleShot(True)
+            self._timeout_timer.timeout.connect(self._on_timeout)
         self._timeout_timer.start(_DOWNLOAD_TIMEOUT * 1000)
 
         logger.info(
-            "开始加载 [%d/%d]: %s",
+            "开始加载 [%d/%d]: %s → %s",
             self._current_idx + 1, self._total, self._current_filename,
+            self._current_url,
         )
+
+        # Reuse the same page — navigate to download URL
         self._page.load(QUrl(self._current_url))
 
     def _on_download_requested(self, download: QWebEngineDownloadRequest):
@@ -200,40 +214,50 @@ class CdePdfDownloader(QObject):
             download.cancel()
             return
 
+        # Ignore stale download requests from previous navigations
+        download_id = id(download)
+
         self._timeout_timer.stop()
 
         download.setDownloadDirectory(self._save_dir)
         download.setDownloadFileName(self._current_filename)
 
         self._current_download = download
-        download.stateChanged.connect(self._on_state_changed)
+        self._active_downloads[download_id] = self._current_filename
+        download.stateChanged.connect(
+            lambda state, did=download_id: self._on_state_changed(state, did)
+        )
         download.accept()
 
-        logger.info("下载请求已接受: %s", self._current_filename)
+        logger.info("下载请求已接受: %s (id=%s)", self._current_filename, download_id)
 
-    def _on_state_changed(self, state):
+    def _on_state_changed(self, state, download_id: int):
         """Handle download state changes."""
+        filename = self._active_downloads.get(download_id, self._current_filename)
+
         if state == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
-            filepath = os.path.join(self._save_dir, self._current_filename)
+            filepath = os.path.join(self._save_dir, filename)
             self._results["success"].append(filepath)
             self._consecutive_failures = 0
-            logger.info("下载完成: %s", self._current_filename)
+            self._active_downloads.pop(download_id, None)
+            logger.info("下载完成: %s → %s", filename, filepath)
             self._advance()
         elif state == QWebEngineDownloadRequest.DownloadState.DownloadInterrupted:
             reason = self._current_download.interruptReason() if self._current_download else -1
+            self._active_downloads.pop(download_id, None)
             logger.warning(
                 "下载中断: %s (reason=%s, retry=%d)",
-                self._current_filename, reason, self._current_retry,
+                filename, reason, self._current_retry,
             )
             if self._current_retry == 0:
                 delay = random.randint(5000, 10000)
-                logger.info("将在 %.1f 秒后重试: %s", delay / 1000, self._current_filename)
+                logger.info("将在 %.1f 秒后重试: %s", delay / 1000, filename)
                 QTimer.singleShot(delay, self._retry_current)
             else:
                 self._consecutive_failures += 1
                 self._results["failed"].append({
                     "url": self._current_url,
-                    "filename": self._current_filename,
+                    "filename": filename,
                     "error": f"interrupted (reason: {reason})",
                 })
                 self._advance()
@@ -262,9 +286,6 @@ class CdePdfDownloader(QObject):
         """Retry current file download."""
         if self._cancelled:
             return
-        if self._page:
-            self._page.deleteLater()
-            self._page = None
         self._download_next(retry=1)
 
     def _advance(self):
@@ -301,6 +322,10 @@ class CdePdfDownloader(QObject):
             self._profile.downloadRequested.disconnect(self._on_download_requested)
         except RuntimeError:
             pass
+
+        if self._page:
+            self._page.deleteLater()
+            self._page = None
 
         success_count = len(self._results["success"])
         failed_count = len(self._results["failed"])
