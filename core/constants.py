@@ -278,3 +278,47 @@ FDA_SUBMISSION_CLASSES = {
     "有效性补充 (SE)": "SE",
     "制造补充 (SL)": "SL",
 }
+
+# ================================================================
+# CDE 上市药品信息 — 常量
+# ================================================================
+CDE_LIST_URL = "https://www.cde.org.cn/main/xxgk/listpage/b40868b5e21c038a6aa8b4319d21b07d"
+CDE_PAGE_SIZE = 10
+CDE_PAGE_TIMEOUT = 40  # seconds per page load
+CDE_DETAIL_MAX_CONCURRENT = 3
+
+# PDF 下载：文件间随机延迟（秒）
+CDE_DOWNLOAD_DELAY_MIN = 5
+CDE_DOWNLOAD_DELAY_MAX = 10
+CDE_DOWNLOAD_TIMEOUT = 60  # seconds per file
+
+# 药品类型选项（从 CDE 页面提取的实际值）
+CDE_DRUG_TYPES = {
+    "全部": "",
+    "化学药品": "1",
+    "中药": "2",
+    "生物制品": "3",
+    "体外诊断试剂": "4",
+    "药品类易制毒化学品": "5",
+    "药械组合产品": "6",
+}
+
+# 申请类型选项
+CDE_APPLY_TYPES = {
+    "全部": "",
+    "新药": "1",
+    "仿制药": "2",
+    "进口药": "3",
+    "补充申请": "4",
+    "再注册": "5",
+}
+
+# 注册分类选项
+CDE_REG_CLASSES = {
+    "全部": "",
+    "1类": "1",
+    "2类": "2",
+    "3类": "3",
+    "4类": "4",
+    "5类": "5",
+}
