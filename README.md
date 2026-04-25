@@ -20,6 +20,7 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 2. **Search & Download** -- Multi-condition search, paste URL, or download by trial ID; multi-register search with result count preview
 3. **Extract & Export** -- Field extraction with concept functions, multi-dimensional filtering, CSV export, document download
 4. **FDA Review** -- Standalone FDA review document search and download (independent of trial data, no database required)
+5. **CDE Review** -- CDE (China Drug Evaluation) marketed drug search and review PDF download (bypasses Ruishu WAF via QWebEngine)
 
 ### Smart Search
 - Multi-condition form search (keyword, phase, recruitment status, population)
@@ -68,6 +69,7 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 - R environment auto-detection with setup guidance
 - Persistent settings (theme, paths, timeout, search state, column widths)
 - Collapsible card layout for organized content
+- Custom `DateEdit` widget: free-text typing + calendar popup with year/month dropdown selectors, theme-aware styling
 
 ## System Requirements
 
@@ -122,9 +124,11 @@ ui/
     search_tab.py                # Tab 2: Search & download
     export_tab.py                # Tab 3: Extract, filter, export, docs
     fda_tab.py                   # Tab 4: FDA review document search & download
+    cde_tab.py                   # Tab 5: CDE marketed drug search & PDF download
   widgets/
     progress.py                  # ProgressPanel (bar + ETA + cancel)
     collapsible_card.py          # CollapsibleCard layout
+    date_edit.py                 # DateEdit custom widget (free-text + calendar popup)
   theme.py                       # QSS theme system
   settings_dialog.py             # Settings (theme, paths, timeout)
 ctrdata/
@@ -144,6 +148,8 @@ service/
   fda_service.py                 # FDA openFDA search & TOC expansion
   fda_toc_parser.py              # QWebEngine TOC page parser (pdfFiles extraction)
   fda_pdf_downloader.py          # QWebEngine PDF downloader (bypasses Akamai)
+  cde_scraper.py                 # CDE list scraper + detail page parser
+  cde_pdf_downloader.py          # CDE PDF downloader (bypasses Ruishu WAF)
 ```
 
 **Data flow**: Python UI -> `CtrdataBridge` -> `Rscript.exe` subprocess -> `ctrdata` R package -> API calls -> SQLite / PDF files on disk.

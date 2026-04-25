@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QCheckBox, QFrame, QFileDialog,
     QSizePolicy, QComboBox, QHeaderView, QMessageBox, QMenu,
-    QScrollArea, QDateEdit,
+    QScrollArea,
 )
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 from ui.theme import get_font, SPACING
 from ui.widgets.card import CollapsibleCard
+from ui.widgets.date_edit import DateEdit
 from ui.widgets.progress import ProgressPanel
 from ui.widgets.table_model import PandasTableModel
 from core.constants import (
@@ -253,13 +254,11 @@ class ExportTab(QWidget):
         f_row2 = QHBoxLayout()
         f_row2.setSpacing(SPACING["sm"])
         f_row2.addWidget(QLabel("开始日期:"))
-        self.date_start_input, clear_ds = self._make_date_edit()
+        self.date_start_input = DateEdit()
         f_row2.addWidget(self.date_start_input)
-        f_row2.addWidget(clear_ds)
         f_row2.addWidget(QLabel("~"))
-        self.date_end_input, clear_de = self._make_date_edit()
+        self.date_end_input = DateEdit()
         f_row2.addWidget(self.date_end_input)
-        f_row2.addWidget(clear_de)
         f_row2.addSpacing(20)
         f_row2.addWidget(QLabel("适应症:"))
         self.condition_input = QLineEdit()
@@ -412,25 +411,6 @@ class ExportTab(QWidget):
 
     # ── Scope ──
 
-    @staticmethod
-    def _make_date_edit():
-        """Create QDateEdit with calendar popup and clear button."""
-        _EMPTY = QDate(2000, 1, 1)
-        de = QDateEdit()
-        de.setCalendarPopup(True)
-        de.setDisplayFormat("yyyy-MM-dd")
-        de.setMinimumDate(_EMPTY)
-        de.setSpecialValueText(" ")
-        de.setDate(_EMPTY)
-        de.setFixedSize(120, 30)
-
-        clear = QPushButton("\u00d7")
-        clear.setFixedSize(22, 22)
-        clear.setToolTip("清除日期")
-        clear.clicked.connect(lambda: de.setDate(_EMPTY))
-
-        return de, clear
-
     def _on_scope_change(self):
         self.refresh_scope_counts()
 
@@ -521,11 +501,9 @@ class ExportTab(QWidget):
             )
             return
 
-        # Get date values from QDateEdit
-        dsd = self.date_start_input.date()
-        ded = self.date_end_input.date()
-        ds = dsd.toString("yyyy-MM-dd") if dsd.isValid() and dsd.year() > 2000 else ""
-        de = ded.toString("yyyy-MM-dd") if ded.isValid() and ded.year() > 2000 else ""
+        # Get date values
+        ds = self.date_start_input.date_str()
+        de = self.date_end_input.date_str()
 
         self._is_extracting = True
         self.extract_btn.setEnabled(False)

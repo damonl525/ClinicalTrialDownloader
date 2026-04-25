@@ -311,4 +311,46 @@ def _build_qss(colors: dict) -> str:
     QDialogButtonBox QPushButton {{
         min-width: 80px;
     }}
+
+    /* ── DateEdit — compound date input widget ── */
+    QWidget#dateEdit {{
+        background: {colors['bg']};
+        border: 1px solid {colors['border']};
+        border-radius: {RADIUS['md']}px;
+    }}
+    QWidget#dateEdit[focused="true"] {{
+        border: 1.5px solid {colors['primary']};
+    }}
+    /* Inner line edit: borderless, transparent */
+    QWidget#dateEdit QLineEdit {{
+        border: none;
+        background: transparent;
+        padding: 0px 4px;
+        min-height: 0px;
+    }}
+    /* Embedded buttons inside DateEdit */
+    QToolButton#dateEditCalBtn {{
+        background: transparent;
+        border: none;
+        color: {colors['text_secondary']};
+        font-size: 10pt;
+        padding: 0px;
+        margin: 0px;
+    }}
+    QToolButton#dateEditCalBtn:hover {{
+        color: {colors['primary']};
+    }}
+    QToolButton#dateEditClearBtn {{
+        background: transparent;
+        border: none;
+        border-left: 1px solid {colors['border']};
+        color: {colors['text_secondary']};
+        font-size: 11pt;
+        font-weight: bold;
+        padding: 0px 2px;
+        margin: 4px 2px 4px 0px;
+    }}
+    QToolButton#dateEditClearBtn:hover {{
+        color: {colors['error']};
+    }}
     """

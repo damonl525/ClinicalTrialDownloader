@@ -15,11 +15,12 @@ logger = logging.getLogger(__name__)
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
-    QDateEdit, QFileDialog, QMenu, QCheckBox,
+    QFileDialog, QMenu, QCheckBox,
 )
-from PySide6.QtCore import Qt, Signal, QDate
+from PySide6.QtCore import Qt, Signal
 
 from ui.widgets.card import CollapsibleCard
+from ui.widgets.date_edit import DateEdit
 from ui.widgets.filter_table import FilterTableView
 from ui.widgets.progress import ProgressPanel
 from ui.theme import SPACING
@@ -68,24 +69,6 @@ class CdeTab(QWidget):
     # Search area
     # ─────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _make_date_edit():
-        """Create QDateEdit with calendar popup and clear button."""
-        _EMPTY = QDate(2000, 1, 1)
-        de = QDateEdit()
-        de.setCalendarPopup(True)
-        de.setDisplayFormat("yyyy-MM-dd")
-        de.setMinimumDate(_EMPTY)
-        de.setSpecialValueText(" ")
-        de.setDate(_EMPTY)
-        de.setFixedSize(120, 30)
-
-        clear = QPushButton("\u00d7")
-        clear.setFixedSize(22, 22)
-        clear.setToolTip("清除日期")
-        clear.clicked.connect(lambda: de.setDate(_EMPTY))
-        return de, clear
-
     def _build_search_area(self, parent_layout):
         # Main search row
         search_row = QHBoxLayout()
@@ -98,14 +81,12 @@ class CdeTab(QWidget):
         search_row.addWidget(self.keyword_input, stretch=2)
 
         search_row.addWidget(QLabel("日期从:"))
-        self.date_from, clear_from = self._make_date_edit()
+        self.date_from = DateEdit()
         search_row.addWidget(self.date_from)
-        search_row.addWidget(clear_from)
 
         search_row.addWidget(QLabel("到:"))
-        self.date_to, clear_to = self._make_date_edit()
+        self.date_to = DateEdit()
         search_row.addWidget(self.date_to)
-        search_row.addWidget(clear_to)
 
         self.search_btn = QPushButton("搜索")
         self.search_btn.setObjectName("primary")
@@ -241,12 +222,12 @@ class CdeTab(QWidget):
         """Gather search params from UI fields."""
         params = {"keyword": self.keyword_input.text().strip()}
 
-        df = self.date_from.date()
-        if df.isValid() and df.year() > 2000:
-            params["date_from"] = df.toString("yyyy-MM-dd")
-        dt = self.date_to.date()
-        if dt.isValid() and dt.year() > 2000:
-            params["date_to"] = dt.toString("yyyy-MM-dd")
+        df = self.date_from.date_str()
+        if df:
+            params["date_from"] = df
+        dt = self.date_to.date_str()
+        if dt:
+            params["date_to"] = dt
 
         drug_type = self.drug_type_combo.currentData()
         if drug_type:
@@ -372,8 +353,8 @@ class CdeTab(QWidget):
 
     def _do_reset(self):
         self.keyword_input.clear()
-        self.date_from.setDate(QDate(2000, 1, 1))
-        self.date_to.setDate(QDate(2000, 1, 1))
+        self.date_from.clear()
+        self.date_to.clear()
         self.drug_type_combo.setCurrentIndex(0)
         self.apply_type_combo.setCurrentIndex(0)
         self.reg_class_combo.setCurrentIndex(0)
