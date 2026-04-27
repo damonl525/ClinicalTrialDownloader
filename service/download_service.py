@@ -50,7 +50,6 @@ class DownloadService:
         self,
         params: dict,
         selected_regs: list,
-        protocol_filter: bool = False,
         is_cancelled: Callable[[], bool] = lambda: False,
         on_log: Callable[[str], None] = None,
         on_progress: Callable[[int, int, str], None] = None,
@@ -58,7 +57,7 @@ class DownloadService:
     ) -> DownloadResult:
         """
         Full form-download pipeline:
-        generate queries → download per register → aggregate → protocol filter.
+        generate queries → download per register → aggregate.
 
         Returns DownloadResult with all aggregated data.
         """
@@ -168,28 +167,7 @@ class DownloadService:
                 all_failed.append(f"{reg}: {e}")
                 all_failed_detail.append({"register": reg, "error": str(e)})
 
-        # 3. Protocol filter
-        protocol_skipped = 0
-        protocol_skipped_ids = []
-        if protocol_filter and all_success and filtered_urls:
-            _log("─" * 50)
-            _log("正在扫描 Protocol 文档可用性...")
-            try:
-                protocol_ids = self.bridge.scan_document_availability(
-                    urls=filtered_urls,
-                    doc_pattern="prot",
-                    callback=lambda msg: _log(f"  {msg}"),
-                )
-                before = len(all_success)
-                kept = [tid for tid in all_success if tid in protocol_ids]
-                protocol_skipped_ids = [tid for tid in all_success if tid not in protocol_ids]
-                all_success = kept
-                protocol_skipped = len(protocol_skipped_ids)
-                _log(f"  Protocol 过滤: {before} → {len(all_success)} (跳过 {protocol_skipped})")
-            except Exception as e:
-                _log(f"  Protocol 扫描失败: {e}")
-
-        # 4. Get updated DB info
+        # 3. Get updated DB info
         try:
             db_info = self.bridge.get_db_info()
             db_total = db_info.get("total_records", "?")
@@ -206,8 +184,6 @@ class DownloadService:
             failed_detail=all_failed_detail,
             skipped=all_skipped,
             skipped_detail=all_skipped_detail,
-            protocol_skipped=protocol_skipped,
-            protocol_skipped_ids=protocol_skipped_ids,
             db_total=str(db_total),
             cancelled=False,
             urls=filtered_urls,

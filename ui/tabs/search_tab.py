@@ -561,6 +561,8 @@ class SearchTab(QWidget):
             return
 
         protocol_filter = self.protocol_only_check.isChecked()
+        # Store for Export Tab to pick up during auto-extract
+        self.app.protocol_filter_requested = protocol_filter
 
         def _worker():
             svc = self._get_dl_service()
@@ -568,7 +570,6 @@ class SearchTab(QWidget):
                 result = svc.form_download(
                     params=params,
                     selected_regs=selected_regs,
-                    protocol_filter=protocol_filter,
                     is_cancelled=lambda: not self.is_downloading,
                     on_log=self._log,
                     on_progress=lambda c, t, m: self._progress_update.emit(c, t, m),

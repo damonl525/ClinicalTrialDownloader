@@ -9,6 +9,7 @@ import re
 import threading
 import time
 import webbrowser
+import logging
 
 import pandas as pd
 from PySide6.QtWidgets import (
@@ -21,6 +22,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont
 
 from ui.theme import get_font, SPACING
+
+logger = logging.getLogger(__name__)
 from ui.widgets.card import CollapsibleCard
 from ui.widgets.date_edit import DateEdit
 from ui.widgets.progress import ProgressPanel
@@ -279,6 +282,13 @@ class ExportTab(QWidget):
         )
         filter_layout.addWidget(self.dedup_check)
 
+        self.protocol_only_check = QCheckBox("仅含Protocol文档")
+        self.protocol_only_check.setToolTip(
+            "提取后仅保留有Protocol（研究方案）文档的试验。\n"
+            "基于数据库中的文档元数据过滤，无需额外网络请求。"
+        )
+        filter_layout.addWidget(self.protocol_only_check)
+
         self._filter_card.set_body_layout(filter_layout)
         layout.addWidget(self._filter_card)
 
@@ -494,6 +504,17 @@ class ExportTab(QWidget):
         selected_fields = self._get_selected_fields()
         selected_concepts = [k for k, cb in self.concept_checks.items() if cb.isChecked()]
 
+        protocol_filter = self.protocol_only_check.isChecked()
+        if protocol_filter:
+            # Auto-add document metadata fields for Protocol filtering
+            proto_fields = [
+                "documentSection.largeDocumentModule.largeDocs.hasProtocol",
+                "documentSection.largeDocumentModule.largeDocs.filename",
+            ]
+            for f in proto_fields:
+                if f not in selected_fields:
+                    selected_fields.append(f)
+
         if not selected_fields and not selected_concepts:
             QMessageBox.warning(
                 self, "提示",
@@ -566,8 +587,56 @@ class ExportTab(QWidget):
             return
         # Set scope to current search results
         self.scope_current_rb.setChecked(True)
+        # Propagate Protocol filter from Search Tab
+        protocol_requested = getattr(self.app, 'protocol_filter_requested', False)
+        if protocol_requested:
+            self.protocol_only_check.setChecked(True)
+            self._filter_card.header.setChecked(True)
         # Trigger extract with current settings
         self._extract()
+
+    def _apply_protocol_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Filter DataFrame to keep only trials with Protocol documents.
+
+        Uses database metadata fields (no network requests):
+        - CTGOV2: hasProtocol boolean in document metadata
+        - Other registries: attachedFiles filename patterns
+        """
+        if df is None or len(df) == 0:
+            return df
+
+        hp_col = "documentSection.largeDocumentModule.largeDocs.hasProtocol"
+        fn_col = "documentSection.largeDocumentModule.largeDocs.filename"
+        mask = pd.Series(False, index=df.index)
+
+        if "_id" in df.columns:
+            id_col = df["_id"].astype(str)
+            ctgov_mask = id_col.str.startswith("NCT")
+        else:
+            ctgov_mask = pd.Series(False, index=df.index)
+
+        # CTGOV2: check hasProtocol field for TRUE
+        if hp_col in df.columns:
+            ctgov_with_hp = ctgov_mask & df[hp_col].astype(str).str.contains("true", case=False, na=False)
+            mask |= ctgov_with_hp
+        else:
+            # Field not available — keep CTGOV2 trials (conservative)
+            mask |= ctgov_mask
+
+        # Non-CTGOV2: check attachedFiles/filename for protocol patterns
+        non_ctgov = ~ctgov_mask
+        if fn_col in df.columns:
+            non_ctgov_with_prot = non_ctgov & df[fn_col].astype(str).str.contains(
+                "prot", case=False, na=False
+            )
+            mask |= non_ctgov_with_prot
+        else:
+            # No filename field — keep non-CTGOV2 trials (conservative)
+            mask |= non_ctgov
+
+        filtered = df[mask].copy()
+        logger.info(f"Protocol filter: {len(df)} → {len(filtered)} rows")
+        return filtered
 
     def _on_extract_complete(self, df):
         # If extraction was cancelled, UI is already reset by _cancel_extract
@@ -580,6 +649,17 @@ class ExportTab(QWidget):
         except RuntimeError:
             pass
         self.extract_btn.setEnabled(True)
+
+        # Protocol filter (post-extraction, local database query)
+        protocol_filter = self.protocol_only_check.isChecked()
+        protocol_info = ""
+        if protocol_filter and df is not None and len(df) > 0:
+            before = len(df)
+            df = self._apply_protocol_filter(df)
+            after = len(df)
+            skipped = before - after
+            protocol_info = f" | Protocol过滤: {after} 条有文档 (跳过 {skipped})"
+
         self.app.current_data = df
 
         if "_id" in df.columns:
@@ -599,6 +679,7 @@ class ExportTab(QWidget):
         info = f"提取完成: {len(df)} 行 × {len(df.columns)} 列"
         if dedup:
             info += " (已去重)"
+        info += protocol_info
         self.extract_info.setText(info)
         self.app.status.showMessage(f"数据提取成功: {len(df)} 行")
         self.app.update_db_status()
