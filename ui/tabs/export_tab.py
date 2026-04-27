@@ -547,7 +547,18 @@ class ExportTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _cancel_extract(self):
+        self.extract_progress.set_cancel_enabled(False)
+        self.extract_progress.update_detail("正在取消...")
         self.app.bridge.cancel()
+        self._is_extracting = False
+        self.extract_progress.reset()
+        self.extract_btn.setEnabled(True)
+        self.extract_info.setText("已取消")
+        self.app.status.showMessage("数据提取已取消")
+        try:
+            self.extract_progress.cancelled.disconnect(self._cancel_extract)
+        except RuntimeError:
+            pass
 
     def auto_extract(self, search_ids: list):
         """Auto-trigger extraction after search download (called by MainWindow)."""
@@ -559,6 +570,9 @@ class ExportTab(QWidget):
         self._extract()
 
     def _on_extract_complete(self, df):
+        # If extraction was cancelled, UI is already reset by _cancel_extract
+        if not self._is_extracting:
+            return
         self._is_extracting = False
         self.extract_progress.finish(success=len(df) if df is not None else 0)
         try:
@@ -599,6 +613,8 @@ class ExportTab(QWidget):
             self.doc_status.setText("没有可下载的数据")
 
     def _on_extract_error(self, error_msg):
+        if not self._is_extracting:
+            return
         self._is_extracting = False
         self.extract_progress.reset()
         try:
