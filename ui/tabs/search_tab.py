@@ -686,11 +686,16 @@ class SearchTab(QWidget):
             self.progress_panel.reset()
 
     def _on_complete(self, result):
-        self._set_downloading(False)
         if result.get("cancelled"):
+            # If _cancel() already reset UI (progress cancel button), skip
+            if not self.is_downloading:
+                return
+            self._set_downloading(False)
             self.progress_panel.update_detail("下载已取消")
             self.app.status.showMessage("下载已取消")
             return
+
+        self._set_downloading(False)
 
         n = result.get("n", 0)
         s = result.get("success", [])
