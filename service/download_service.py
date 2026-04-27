@@ -151,7 +151,7 @@ class DownloadService:
 
             except DownloadTimeoutError as e:
                 if e.user_action == "cancel":
-                    _log("  用户取消下载")
+                    _log(f"  {reg}: 用户取消下载")
                     return DownloadResult(cancelled=True)
                 elif e.user_action == "skip":
                     _log(f"  {reg}: 用户跳过（已运行 {e.elapsed}秒）")

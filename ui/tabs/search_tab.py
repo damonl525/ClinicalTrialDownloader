@@ -576,6 +576,7 @@ class SearchTab(QWidget):
                     on_timeout=self._make_timeout_callback(),
                 )
                 if result.cancelled:
+                    self._download_complete.emit({"cancelled": True})
                     return
                 if not result.success and not result.failed:
                     self._download_error.emit("所选注册中心未生成 URL")
@@ -686,6 +687,11 @@ class SearchTab(QWidget):
 
     def _on_complete(self, result):
         self._set_downloading(False)
+        if result.get("cancelled"):
+            self.progress_panel.update_detail("下载已取消")
+            self.app.status.showMessage("下载已取消")
+            return
+
         n = result.get("n", 0)
         s = result.get("success", [])
         if not isinstance(s, list): s = [s] if s else []
@@ -836,9 +842,12 @@ class SearchTab(QWidget):
             self.progress_panel.set_cancel_enabled(True)
         elif clicked == skip_btn:
             ctx["choice"] = "skip"
+            self.progress_panel.update_detail("正在跳过...")
         else:
             ctx["choice"] = "cancel"
+            self.progress_panel.update_detail("正在取消...")
 
+        logger.debug(f"Timeout dialog choice: {ctx['choice']} (clicked={clicked})")
         ctx["event"].set()
 
     def _make_timeout_callback(self):
@@ -853,5 +862,7 @@ class SearchTab(QWidget):
             }
             self._timeout_request.emit(ctx)
             event.wait()  # Block worker thread until user responds
-            return ctx["choice"] or "cancel"
+            choice = ctx["choice"] or "cancel"
+            logger.debug(f"Timeout callback returning: '{choice}' (ctx.choice={ctx['choice']})")
+            return choice
         return on_timeout
