@@ -41,7 +41,7 @@ def _session_hash(trial_ids) -> str:
 def _load_resume(bridge, resume_file: str) -> dict:
     """Load checkpoint data from file."""
     if not os.path.exists(resume_file):
-        return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+        return {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
     try:
         with open(resume_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -49,11 +49,12 @@ def _load_resume(bridge, resume_file: str) -> dict:
             "completed": list(data.get("completed", [])),
             "failed": dict(data.get("failed", {})),
             "skipped_explicitly": list(data.get("skipped_explicitly", [])),
+            "in_progress": list(data.get("in_progress", [])),
             "total": data.get("total", 0),
             "session": data.get("session", None),
         }
     except Exception:
-        return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+        return {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
 
 
 def _save_resume(
@@ -64,6 +65,7 @@ def _save_resume(
     total: int,
     skipped_explicitly: list = None,
     session: str = None,
+    in_progress: list = None,
 ):
     """Atomically write checkpoint file."""
     data = {
@@ -71,6 +73,7 @@ def _save_resume(
         "failed": failed,
         "total": total,
         "skipped_explicitly": skipped_explicitly or [],
+        "in_progress": in_progress or [],
         "session": session or "",
     }
     tmp_file = resume_file + ".tmp"
@@ -97,7 +100,7 @@ def download_documents_for_ids(
     trial_ids: List[str],
     documents_path: str,
     documents_regexp: str = None,
-    timeout_total: int = 7200,
+    timeout_total: int = 86400,
     per_trial_timeout: int = 180,
     callback: Callable = None,
 ) -> Dict[str, Any]:
@@ -121,10 +124,11 @@ def download_documents_for_ids(
     current_session = _session_hash(trial_ids)
     if resume_data.get("session") and resume_data["session"] != current_session:
         _cleanup_resume(bridge, resume_file)
-        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
 
     already_done = set(resume_data.get("completed", []))
     skipped_explicit = set(resume_data.get("skipped_explicitly", []))
+    in_progress_set = set(resume_data.get("in_progress", []))
     remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
 
     if not remaining:
@@ -141,6 +145,7 @@ def download_documents_for_ids(
     runtime_completed = list(already_done)
     runtime_failed = dict(resume_data.get("failed", {}))
     runtime_skipped_explicit = list(resume_data.get("skipped_explicitly", []))
+    runtime_in_progress = set(in_progress_set & set(remaining))
 
     def _save_runtime_resume():
         _save_resume(
@@ -151,11 +156,15 @@ def download_documents_for_ids(
             len(trial_ids),
             skipped_explicitly=runtime_skipped_explicit,
             session=current_session,
+            in_progress=list(runtime_in_progress),
         )
 
     for i, tid in enumerate(remaining, 1):
         if callback:
             callback(i, total_to_process, tid, "start", None)
+
+        runtime_in_progress.add(tid)
+        _save_runtime_resume()
 
         try:
             result = download_one_trial_doc(
@@ -177,6 +186,7 @@ def download_documents_for_ids(
             if callback:
                 callback(i, total_to_process, tid, "skip", err_msg)
 
+        runtime_in_progress.discard(tid)
         _save_runtime_resume()
 
     skipped = {}
@@ -212,7 +222,10 @@ def download_documents_batch(
     per_trial_timeout: int = 180,
     callback: Callable = None,
 ) -> dict:
-    """Download documents using a single R batch session with resume support."""
+    """Download documents using a single R batch session with resume support.
+
+    Deprecated: use download_documents_for_ids() for per-trial timeout isolation.
+    """
     if not bridge.db_path:
         raise DatabaseError("请先连接数据库")
     if not trial_ids:
@@ -226,7 +239,7 @@ def download_documents_batch(
     current_session = _session_hash(trial_ids)
     if resume_data.get("session") and resume_data["session"] != current_session:
         _cleanup_resume(bridge, resume_file)
-        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
 
     already_done = set(resume_data.get("completed", []))
     skipped_explicit = set(resume_data.get("skipped_explicitly", []))
@@ -305,6 +318,7 @@ def mark_trial_skipped(bridge, trial_id: str, documents_path: str):
     skipped = list(resume_data.get("skipped_explicitly", []))
     if trial_id not in skipped:
         skipped.append(trial_id)
+    in_progress = [t for t in resume_data.get("in_progress", []) if t != trial_id]
     _save_resume(
         bridge,
         resume_file,
@@ -313,4 +327,5 @@ def mark_trial_skipped(bridge, trial_id: str, documents_path: str):
         resume_data.get("total", 0),
         skipped_explicitly=skipped,
         session=resume_data.get("session"),
+        in_progress=in_progress,
     )

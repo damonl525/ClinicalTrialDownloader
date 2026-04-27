@@ -4,6 +4,15 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.2] - 2026-04-27
+
+### 改进
+- **文档下载引擎切换**：从单 R session 批量模式切换为逐 trial 独立 R 子进程模式，每个 trial 超时隔离，单个 trial 网络卡死不会阻塞整个下载队列
+- **总超时提升**：文档下载总超时从 2 小时（7200 秒）提升至 24 小时（86400 秒），支持大规模下载
+- **Resume 断点续传增强**：新增 `in_progress` 状态追踪，进程被 kill 后可精确恢复中断位置，避免重复下载已完成的 trial
+- **单 trial 超时上限提升**：设置中单 trial 下载超时上限从 600 秒提升至 900 秒
+- **Bridge resume 逻辑去重**：`CtrdataBridge` 的 resume 方法委托到 `documents.py` 模块函数，消除两套并行实现
+
 ## [1.4.1] - 2026-04-25
 
 ### 新功能

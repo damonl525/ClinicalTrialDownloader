@@ -174,12 +174,12 @@ class CtrdataBridge:
         trial_ids: List[str],
         documents_path: str,
         documents_regexp: str = None,
-        timeout_total: int = 7200,
+        timeout_total: int = 86400,
         per_trial_timeout: int = 180,
         callback: Callable = None,
     ) -> Dict[str, Any]:
-        """为指定的 trial ID 列表下载文档 (uses batch R session)."""
-        return _docs.download_documents_batch(
+        """为指定的 trial ID 列表下载文档 (per-trial R subprocess with resume)."""
+        return _docs.download_documents_for_ids(
             self, trial_ids, documents_path, documents_regexp,
             timeout_total, per_trial_timeout, callback,
         )
@@ -200,45 +200,24 @@ class CtrdataBridge:
 
     def _load_resume(self, resume_file: str) -> dict:
         """Load checkpoint data from file."""
-        if not os.path.exists(resume_file):
-            return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
-        try:
-            with open(resume_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return {
-                "completed": list(data.get("completed", [])),
-                "failed": dict(data.get("failed", {})),
-                "skipped_explicitly": list(data.get("skipped_explicitly", [])),
-                "total": data.get("total", 0),
-                "session": data.get("session", None),
-            }
-        except Exception:
-            return {"completed": [], "failed": {}, "skipped_explicitly": [], "total": 0, "session": None}
+        return _docs._load_resume(self, resume_file)
 
     def _save_resume(
         self, resume_file: str, completed: list, failed: dict, total: int,
         skipped_explicitly: list = None, session: str = None,
+        in_progress: list = None,
     ):
         """Atomically write checkpoint file."""
-        data = {
-            "completed": completed,
-            "failed": failed,
-            "total": total,
-            "skipped_explicitly": skipped_explicitly or [],
-            "session": session or "",
-        }
-        tmp_file = resume_file + ".tmp"
-        with open(tmp_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp_file, resume_file)
+        _docs._save_resume(
+            self, resume_file, completed, failed, total,
+            skipped_explicitly=skipped_explicitly,
+            session=session,
+            in_progress=in_progress,
+        )
 
     def _cleanup_resume(self, resume_file: str):
         """Delete checkpoint file."""
-        try:
-            if os.path.exists(resume_file):
-                os.unlink(resume_file)
-        except Exception:
-            pass
+        _docs._cleanup_resume(self, resume_file)
 
     def _download_one_trial_doc(
         self, trial_id: str, documents_path: str,
@@ -251,24 +230,11 @@ class CtrdataBridge:
 
     def clear_resume(self, documents_path: str = None):
         """清除断点续传文件"""
-        resume_file = self._get_resume_file(documents_path or "")
-        self._cleanup_resume(resume_file)
+        _docs.clear_resume(self, documents_path)
 
     def mark_trial_skipped(self, trial_id: str, documents_path: str):
         """将指定 trial 标记为显式跳过"""
-        resume_file = self._get_resume_file(documents_path)
-        resume_data = self._load_resume(resume_file)
-        skipped = list(resume_data.get("skipped_explicitly", []))
-        if trial_id not in skipped:
-            skipped.append(trial_id)
-        self._save_resume(
-            resume_file,
-            resume_data.get("completed", []),
-            resume_data.get("failed", {}),
-            resume_data.get("total", 0),
-            skipped_explicitly=skipped,
-            session=resume_data.get("session"),
-        )
+        _docs.mark_trial_skipped(self, trial_id, documents_path)
 
     # ============================================================
     # 4. Field discovery

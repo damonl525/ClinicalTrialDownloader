@@ -56,7 +56,7 @@ class TestSettingsDialog(unittest.TestCase):
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog()
         self.assertEqual(dlg.timeout_spin.minimum(), 30)
-        self.assertEqual(dlg.timeout_spin.maximum(), 600)
+        self.assertEqual(dlg.timeout_spin.maximum(), 900)
         dlg.close()
 
     def test_get_theme_returns_combo_data(self):

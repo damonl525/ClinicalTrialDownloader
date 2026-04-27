@@ -76,7 +76,7 @@ class SettingsDialog(QDialog):
         doc_form.addRow("默认保存路径:", doc_path_row)
 
         self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(30, 600)
+        self.timeout_spin.setRange(30, 900)
         self.timeout_spin.setSuffix(" 秒")
         self.timeout_spin.setToolTip("单个试验文档下载超时时间")
         doc_form.addRow("下载超时:", self.timeout_spin)
