@@ -18,8 +18,12 @@ result <- tryCatch({
                     if (any(sapply(val, function(v) isTRUE(v) || identical(tolower(as.character(v)), "true")))) {
                         protocol_ids <- c(protocol_ids, ids_col[i])
                     }
+                } else if (is.logical(val) && length(val) > 0) {
+                    if (any(val, na.rm = TRUE)) {
+                        protocol_ids <- c(protocol_ids, ids_col[i])
+                    }
                 } else if (!is.null(val) && length(val) > 0) {
-                    if (isTRUE(val) || identical(tolower(as.character(val)), "true")) {
+                    if (any(grepl("true", as.character(val), ignore.case = TRUE))) {
                         protocol_ids <- c(protocol_ids, ids_col[i])
                     }
                 }
