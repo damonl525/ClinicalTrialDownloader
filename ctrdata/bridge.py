@@ -284,6 +284,10 @@ class CtrdataBridge:
         """获取跨注册中心去重后的唯一试验 ID"""
         return _extract.get_unique_ids(self)
 
+    def get_protocol_trial_ids(self, scope_ids: List[str] = None) -> List[str]:
+        """直接查询 SQLite 获取有 Protocol 文档的试验 ID（纯 Python，无 R 调用）"""
+        return _extract.get_protocol_trial_ids(self, scope_ids)
+
     # ============================================================
     # 7. Active substance synonyms
     # ============================================================
