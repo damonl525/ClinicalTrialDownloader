@@ -7,6 +7,7 @@ Handles: download_documents_for_ids() with resume/checkpoint logic,
 download_one_trial_doc() (in process module), resume file management.
 """
 
+import hashlib
 import os
 import json
 import logging
@@ -65,18 +66,32 @@ def _flatten_trial_docs(documents_path: str, trial_id: str):
 # ============================================================
 
 def _get_resume_file(bridge, documents_path: str) -> str:
-    """Get the checkpoint file path for a documents directory."""
+    """Get the checkpoint file path scoped to database + download directory."""
     db_basename = os.path.splitext(os.path.basename(bridge.db_path))[0]
     db_dir = os.path.dirname(bridge.db_path) or "."
-    return os.path.join(db_dir, f"{db_basename}_doc_resume.json")
+    path_slug = hashlib.md5(os.path.abspath(documents_path).encode()).hexdigest()[:8]
+    return os.path.join(db_dir, f"{db_basename}_{path_slug}_doc_resume.json")
 
 
-def _session_hash(trial_ids) -> str:
-    """Compute a session hash from sorted trial IDs for resume isolation."""
-    import hashlib
-
+def _session_hash(trial_ids, documents_path: str = "") -> str:
+    """Compute a session hash from trial IDs + download path for resume isolation."""
     sorted_ids = sorted(str(tid) for tid in trial_ids)
-    return hashlib.md5(",".join(sorted_ids).encode()).hexdigest()[:16]
+    payload = ",".join(sorted_ids) + "|" + os.path.abspath(documents_path)
+    return hashlib.md5(payload.encode()).hexdigest()[:16]
+
+
+def _trial_has_docs(documents_path: str, trial_id: str) -> bool:
+    """Check if a trial has actual document files on disk."""
+    trial_dir = os.path.join(documents_path, trial_id)
+    if os.path.isdir(trial_dir) and os.listdir(trial_dir):
+        return True
+    # Also check for flattened files (trial_id_ prefix)
+    if os.path.isdir(documents_path):
+        prefix = f"{trial_id}_"
+        for fname in os.listdir(documents_path):
+            if fname.startswith(prefix):
+                return True
+    return False
 
 
 def _load_resume(bridge, resume_file: str) -> dict:
@@ -162,21 +177,26 @@ def download_documents_for_ids(
     resume_file = _get_resume_file(bridge, documents_path)
     resume_data = _load_resume(bridge, resume_file)
 
-    current_session = _session_hash(trial_ids)
+    current_session = _session_hash(trial_ids, documents_path)
     if resume_data.get("session") and resume_data["session"] != current_session:
         _cleanup_resume(bridge, resume_file)
         resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
 
-    already_done = set(resume_data.get("completed", []))
+    # Validate resume: a trial is only "already done" if docs exist on disk
+    resume_completed_raw = set(resume_data.get("completed", []))
+    already_done = {tid for tid in resume_completed_raw if _trial_has_docs(documents_path, tid)}
+    stale_done = resume_completed_raw - already_done
+    if stale_done:
+        logger.info(f"Resume: {len(stale_done)} trials in resume have no docs on disk, re-downloading")
+
     skipped_explicit = set(resume_data.get("skipped_explicitly", []))
     in_progress_set = set(resume_data.get("in_progress", []))
     remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
 
     if not remaining:
-        requested_set = set(str(tid) for tid in trial_ids)
         return {
             "ok": True,
-            "success": [tid for tid in already_done if tid in requested_set],
+            "success": [tid for tid in already_done if tid in set(str(t) for t in trial_ids)],
             "failed": {},
             "skipped": {},
             "total": len(trial_ids),
@@ -213,9 +233,14 @@ def download_documents_for_ids(
             )
             if result.get("ok"):
                 _flatten_trial_docs(documents_path, tid)
-                runtime_completed.append(tid)
-                if callback:
-                    callback(i, total_to_process, tid, "ok", None)
+                if _trial_has_docs(documents_path, tid):
+                    runtime_completed.append(tid)
+                    if callback:
+                        callback(i, total_to_process, tid, "ok", None)
+                else:
+                    runtime_failed[tid] = "No documents found for this trial"
+                    if callback:
+                        callback(i, total_to_process, tid, "skip", "No documents found")
             else:
                 err = result.get("error", "unknown")
                 runtime_failed[tid] = err
@@ -278,20 +303,20 @@ def download_documents_batch(
     resume_file = _get_resume_file(bridge, documents_path)
     resume_data = _load_resume(bridge, resume_file)
 
-    current_session = _session_hash(trial_ids)
+    current_session = _session_hash(trial_ids, documents_path)
     if resume_data.get("session") and resume_data["session"] != current_session:
         _cleanup_resume(bridge, resume_file)
         resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
 
-    already_done = set(resume_data.get("completed", []))
+    resume_completed_raw = set(resume_data.get("completed", []))
+    already_done = {tid for tid in resume_completed_raw if _trial_has_docs(documents_path, tid)}
     skipped_explicit = set(resume_data.get("skipped_explicitly", []))
     remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
 
     if not remaining:
-        requested_set = set(str(tid) for tid in trial_ids)
         return {
             "ok": True,
-            "success": [tid for tid in already_done if tid in requested_set],
+            "success": [tid for tid in already_done if tid in set(str(t) for t in trial_ids)],
             "failed": {},
             "skipped": {},
             "total": len(trial_ids),
@@ -302,15 +327,16 @@ def download_documents_batch(
     def _on_progress(i, total, tid, status, error):
         if callback:
             callback(i, total, tid, status, error)
-        # Update resume after each successful trial
-        if status == "ok" and tid not in runtime_completed:
-            runtime_completed.append(tid)
-            _save_resume(
-                bridge, resume_file, runtime_completed,
-                resume_data.get("failed", {}), len(trial_ids),
-                skipped_explicitly=list(skipped_explicit),
-                session=current_session,
-            )
+        if status == "ok":
+            _flatten_trial_docs(documents_path, tid)
+            if tid not in runtime_completed and _trial_has_docs(documents_path, tid):
+                runtime_completed.append(tid)
+                _save_resume(
+                    bridge, resume_file, runtime_completed,
+                    resume_data.get("failed", {}), len(trial_ids),
+                    skipped_explicitly=list(skipped_explicit),
+                    session=current_session,
+                )
 
     from ctrdata.process import download_batch_docs as _batch
     results = _batch(

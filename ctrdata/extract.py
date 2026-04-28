@@ -197,12 +197,47 @@ def extract_to_dataframe(
         """
 
     scope_block = ""
+    pre_scope_block = ""
+    post_scope_cleanup = ""
+    final_scope_cleanup = ""
     if scope_ids:
+        # Create a temporary table with only the scoped records so
+        # dbGetFieldsIntoDf() processes only those, not the entire database.
+        # Falls back to post-extraction filtering if temp table approach fails.
+        tmp_table = f"_scope_{os.getpid()}"
+
+        # Build SQL with single quotes for string literals, double quotes for
+        # identifiers — then embed in an R double-quoted string (no sprintf).
+        where_parts = [f"\"_id\" LIKE '{sid}%'" for sid in scope_ids]
+        like_sql = " OR ".join(where_parts)
+        sql = (
+            f'CREATE TEMP TABLE "{tmp_table}" AS SELECT * FROM '
+            f'"{bridge.collection}" WHERE {like_sql}'
+        )
+        # Escape double quotes for R double-quoted string: " → \"
+        sql_r = sql.replace('"', '\\"')
+
+        pre_scope_block = (
+            'con_orig_collection <- con$collection\n'
+            'tryCatch({\n'
+            f'  DBI::dbExecute(con$con, "{sql_r}")\n'
+            f'  con$collection <- "{tmp_table}"\n'
+            '}, error = function(e) {\n'
+            '  message(paste("scope temp table failed:", e$message))\n'
+            '  con$collection <- con_orig_collection\n'
+            '})\n'
+        )
+        post_scope_cleanup = (
+            f'con$collection <- con_orig_collection\n'
+        )
+        final_scope_cleanup = (
+            f'tryCatch(DBI::dbExecute(con$con, "DROP TABLE IF EXISTS \\"{tmp_table}\\""), '
+            'error = function(e) NULL)\n'
+        )
+        # Keep scope_block as fallback for prefix matching edge cases
         ids_str = ", ".join(f'"{_proc._r_escape(sid)}"' for sid in scope_ids)
-        # Prefix matching: EUCTR _id includes country suffix (e.g. EUCTRxxx-DE)
-        # but ctrLoadQueryIntoDb()$success returns the base ID without suffix.
         scope_block = (
-            "if (\"_id\" %in% names(df)) {\n"
+            "if (\"_id\" %in% names(df) && nrow(df) > 0) {\n"
             f"    scope_ids <- c({ids_str})\n"
             "    id_col <- as.character(df$`_id`)\n"
             "    mask <- rep(FALSE, length(id_col))\n"
@@ -222,6 +257,9 @@ def extract_to_dataframe(
         dedup_block=dedup_block,
         scope_block=scope_block,
         csv_path=csv_path,
+        pre_scope_block=pre_scope_block,
+        post_scope_cleanup=post_scope_cleanup,
+        final_scope_cleanup=final_scope_cleanup,
     )
 
     try:

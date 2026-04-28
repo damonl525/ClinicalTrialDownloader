@@ -172,13 +172,14 @@ class ExportTab(QWidget):
         scope_row.addWidget(QLabel("数据范围:"))
         self.scope_current_rb = QCheckBox("仅本次搜索结果")
         self.scope_current_rb.setChecked(True)
-        self.scope_current_rb.toggled.connect(self._on_scope_change)
+        self.scope_current_rb.toggled.connect(self._on_current_scope_toggled)
         scope_row.addWidget(self.scope_current_rb)
         self.scope_count_label = QLabel("(0 条)")
         self.scope_count_label.setStyleSheet("color: #64748B;")
         scope_row.addWidget(self.scope_count_label)
 
         self.scope_all_rb = QCheckBox("全部数据库")
+        self.scope_all_rb.toggled.connect(self._on_all_scope_toggled)
         scope_row.addWidget(self.scope_all_rb)
         self.scope_db_count_label = QLabel("(0 条)")
         self.scope_db_count_label.setStyleSheet("color: #64748B;")
@@ -419,12 +420,34 @@ class ExportTab(QWidget):
         outer.addWidget(scroll)
 
         # Initial scope update
-        self._on_scope_change()
+        self.refresh_scope_counts()
 
     # ── Scope ──
 
-    def _on_scope_change(self):
-        self.refresh_scope_counts()
+    def _on_current_scope_toggled(self, checked):
+        if checked:
+            self.scope_all_rb.blockSignals(True)
+            self.scope_all_rb.setChecked(False)
+            self.scope_all_rb.blockSignals(False)
+            self.refresh_scope_counts()
+        else:
+            # Prevent deselecting both — at least one must stay checked
+            if not self.scope_all_rb.isChecked():
+                self.scope_current_rb.blockSignals(True)
+                self.scope_current_rb.setChecked(True)
+                self.scope_current_rb.blockSignals(False)
+
+    def _on_all_scope_toggled(self, checked):
+        if checked:
+            self.scope_current_rb.blockSignals(True)
+            self.scope_current_rb.setChecked(False)
+            self.scope_current_rb.blockSignals(False)
+            self.refresh_scope_counts()
+        else:
+            if not self.scope_current_rb.isChecked():
+                self.scope_all_rb.blockSignals(True)
+                self.scope_all_rb.setChecked(True)
+                self.scope_all_rb.blockSignals(False)
 
     def refresh_scope_counts(self):
         """Update scope count labels — called on tab switch and after download."""
@@ -832,7 +855,7 @@ class ExportTab(QWidget):
         from ctrdata.documents import _get_resume_file, _load_resume, _session_hash, _cleanup_resume
         resume_file = _get_resume_file(self.app.bridge, docs_path)
         resume_data = _load_resume(self.app.bridge, resume_file)
-        current_session = _session_hash(filtered_ids)
+        current_session = _session_hash(filtered_ids, docs_path)
 
         resume_info = None
         if resume_data.get("session") and resume_data["session"] == current_session:
