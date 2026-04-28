@@ -125,6 +125,7 @@ class ExportTab(QWidget):
     _doc_complete = Signal(dict)
     _doc_error = Signal(str)
     _fields_loaded = Signal(list)   # loaded field names from background thread
+    _log_signal = Signal(str, str)  # level, message
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
@@ -144,6 +145,7 @@ class ExportTab(QWidget):
         self._doc_complete.connect(self._on_doc_complete)
         self._doc_error.connect(self._on_doc_error)
         self._fields_loaded.connect(self._on_fields_loaded)
+        self._log_signal.connect(self._on_log_signal)
 
     def _make_card(self) -> QFrame:
         frame = QFrame()
@@ -533,6 +535,7 @@ class ExportTab(QWidget):
         db_total = getattr(self.app, 'db_total_records', '?')
         self.extract_progress.update_detail(f"正在提取数据 ({db_total} 条记录)...")
         self.extract_progress.cancelled.connect(self._cancel_extract)
+        self._log(f"开始提取数据: 范围={scope}, 去重={dedup}")
 
         dedup = self.dedup_check.isChecked()
         filter_phase = FILTER_PHASES.get(self.phase_combo.currentText(), "")
@@ -570,6 +573,7 @@ class ExportTab(QWidget):
     def _cancel_extract(self):
         self.extract_progress.set_cancel_enabled(False)
         self.extract_progress.update_detail("正在取消...")
+        self._log("用户取消数据提取")
         self.app.bridge.cancel()
         self._is_extracting = False
         self.extract_progress.reset()
@@ -681,6 +685,7 @@ class ExportTab(QWidget):
             info += " (已去重)"
         info += protocol_info
         self.extract_info.setText(info)
+        self._log(info)
         self.app.status.showMessage(f"数据提取成功: {len(df)} 行")
         self.app.update_db_status()
 
@@ -704,6 +709,7 @@ class ExportTab(QWidget):
             pass
         self.extract_btn.setEnabled(True)
         self.extract_info.setText("提取失败")
+        self._log(f"提取失败: {error_msg}")
         QMessageBox.critical(self, "提取失败", error_msg)
 
     # ── Pagination ──
@@ -904,7 +910,8 @@ class ExportTab(QWidget):
         self.doc_progress.set_cancel_enabled(True)
         self.doc_progress.cancelled.connect(self._cancel_doc_download)
         self._doc_start_time = time.time()
-        self.doc_status.setText(f"正在下载文档 0/{total}...")
+
+        self._log(f"开始下载文档: {total} 个试验, 类型={doc_regexp or '全部'}")
 
         from ui.app import get_settings
         per_trial_timeout = int(get_settings().value("doc/timeout", 120))
@@ -930,12 +937,25 @@ class ExportTab(QWidget):
         self.doc_progress.update_progress(current, total, f"正在下载 {trial_id} ({current}/{total})")
         if status == "start":
             self.doc_progress.update_detail(f"{current}/{total} 试验")
-        elif status in ("ok", "error", "skip"):
-            # Calculate ETA (only after 3+ data points for stability)
+            logger.info(f"文档下载 [{current}/{total}]: {trial_id} 开始")
+        elif status == "ok":
             if current >= 3 and self._doc_start_time:
                 elapsed = time.time() - self._doc_start_time
                 remaining = elapsed / current * (total - current)
                 self.doc_progress.update_eta(elapsed, remaining)
+            logger.info(f"文档下载 [{current}/{total}]: {trial_id} 完成")
+        elif status == "error":
+            if current >= 3 and self._doc_start_time:
+                elapsed = time.time() - self._doc_start_time
+                remaining = elapsed / current * (total - current)
+                self.doc_progress.update_eta(elapsed, remaining)
+            logger.warning(f"文档下载 [{current}/{total}]: {trial_id} 失败")
+        elif status == "skip":
+            if current >= 3 and self._doc_start_time:
+                elapsed = time.time() - self._doc_start_time
+                remaining = elapsed / current * (total - current)
+                self.doc_progress.update_eta(elapsed, remaining)
+            logger.info(f"文档下载 [{current}/{total}]: {trial_id} 跳过")
 
     def _on_doc_complete(self, result):
         try:
@@ -953,6 +973,9 @@ class ExportTab(QWidget):
 
         self.doc_progress.finish(success=len(success), skipped=skip_count, failed=fail_count)
 
+        self._log(
+            f"文档下载完成: 成功 {len(success)}, 跳过 {skip_count}, 失败 {fail_count}"
+        )
         self.doc_status.setText(
             f"完成: 成功 {len(success)}, 跳过 {skip_count}, 失败 {fail_count}"
         )
@@ -963,17 +986,36 @@ class ExportTab(QWidget):
     def _on_doc_error(self, error_msg):
         self.doc_progress.reset()
         self._enable_doc_buttons(True)
+        self._log(f"文档下载失败: {error_msg}")
         self.doc_status.setText("文档下载失败")
         QMessageBox.critical(self, "文档下载失败", error_msg)
 
     def _cancel_doc_download(self):
         self.doc_progress.set_cancel_enabled(False)
         self.doc_status.setText("正在取消...")
+        self._log("用户取消文档下载")
         if self.app.bridge:
             self.app.bridge.cancel()
         self.doc_status.setText("已取消")
         self._enable_doc_buttons(True)
         self.doc_progress.reset()
+
+    # ── Logging ──
+
+    def _log(self, msg: str):
+        """Thread-safe log — MUST go through signal."""
+        self._log_signal.emit("info", msg)
+
+    def _on_log_signal(self, level: str, msg: str):
+        try:
+            if level == "error":
+                logger.error(msg)
+            elif level == "warning":
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+        except RuntimeError:
+            pass
 
     # ── CSV export ──
 
