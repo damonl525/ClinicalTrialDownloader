@@ -529,39 +529,29 @@ class ExportTab(QWidget):
 
         scope_ids = self._get_scope_ids()
 
-        # Protocol pre-filter: query SQLite directly to get Protocol-trial IDs,
-        # then pass as scope_ids — avoids extracting huge document metadata via R
-        protocol_info = ""
-        if protocol_filter:
-            self._is_extracting = True
-            self.extract_btn.setEnabled(False)
-            self.extract_progress.set_indeterminate()
-            self.extract_progress.update_detail("正在查询 Protocol 文档...")
-            self._log("Protocol 预过滤: 查询数据库...")
-            protocol_ids = self.app.bridge.get_protocol_trial_ids(scope_ids)
-            before = len(scope_ids) if scope_ids else int(getattr(self.app, 'db_total_records', 0))
-            protocol_info = f" | Protocol过滤: {len(protocol_ids)} 条有文档 (跳过 {before - len(protocol_ids)})"
-            scope_ids = protocol_ids
-            if not scope_ids:
-                self._is_extracting = False
-                self.extract_btn.setEnabled(True)
-                self.extract_progress.reset()
-                self.extract_info.setText("Protocol 过滤: 没有符合条件的试验")
-                self.app.status.showMessage("没有含 Protocol 文档的试验")
-                return
-
         self._is_extracting = True
         self.extract_btn.setEnabled(False)
         self.extract_progress.set_indeterminate()
         self.extract_progress.set_cancel_enabled(True)
-        db_total = len(scope_ids) if scope_ids else getattr(self.app, 'db_total_records', '?')
-        self.extract_progress.update_detail(f"正在提取数据 ({db_total} 条记录)...")
         self.extract_progress.cancelled.connect(self._cancel_extract)
-        self._log(f"开始提取数据: 范围={scope}, 去重={dedup}{protocol_info}")
+        self.extract_progress.update_detail("正在准备提取..." if not protocol_filter else "正在查询 Protocol 文档...")
 
         def _worker():
-            svc = ExtractService(self.app.bridge)
             try:
+                effective_scope = scope_ids
+                # Protocol pre-filter in background thread
+                if protocol_filter:
+                    self._log_signal.emit("info", "Protocol 预过滤: 查询数据库...")
+                    protocol_ids = self.app.bridge.get_protocol_trial_ids(scope_ids)
+                    before = len(scope_ids) if scope_ids else int(getattr(self.app, 'db_total_records', 0))
+                    self._log_signal.emit("info",
+                        f"Protocol过滤: {len(protocol_ids)} 条有文档 (跳过 {before - len(protocol_ids)})")
+                    effective_scope = protocol_ids
+                    if not effective_scope:
+                        self._extract_complete.emit(pd.DataFrame())
+                        return
+
+                svc = ExtractService(self.app.bridge)
                 df = svc.extract(
                     fields=selected_fields if selected_fields else None,
                     concepts=selected_concepts if selected_concepts else None,
@@ -573,7 +563,7 @@ class ExportTab(QWidget):
                     filter_condition=filter_condition,
                     filter_intervention=filter_intervention,
                     filter_register=filter_register,
-                    scope_ids=scope_ids,
+                    scope_ids=effective_scope,
                 )
                 self._extract_complete.emit(df)
             except Exception as e:
@@ -616,6 +606,26 @@ class ExportTab(QWidget):
             return
         self._is_extracting = False
         self.extract_progress.finish(success=len(df) if df is not None else 0)
+        try:
+            self.extract_progress.cancelled.disconnect(self._cancel_extract)
+        except RuntimeError:
+            pass
+        self.extract_btn.setEnabled(True)
+
+        # Handle empty result (e.g., Protocol filter found no matches)
+        if df is None or len(df) == 0:
+            self.app.current_data = pd.DataFrame()
+            self.app.filtered_ids = []
+            self.table_model.update_data(pd.DataFrame())
+            self._full_df = pd.DataFrame()
+            self.extract_info.setText("Protocol 过滤: 没有符合条件的试验")
+            self._log("Protocol 过滤: 没有符合条件的试验")
+            self.app.status.showMessage("没有含 Protocol 文档的试验")
+            self._enable_doc_buttons(False)
+            self.doc_status.setText("没有可下载的数据")
+            return
+
+        self.app.current_data = df
         try:
             self.extract_progress.cancelled.disconnect(self._cancel_extract)
         except RuntimeError:

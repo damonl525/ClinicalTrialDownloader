@@ -53,8 +53,10 @@ def get_protocol_trial_ids(bridge, scope_ids: Optional[List[str]] = None) -> Lis
     if isinstance(all_protocol_ids, str):
         all_protocol_ids = [all_protocol_ids]
 
-    # If scope_ids provided, intersect
-    if scope_ids:
+    # If scope_ids provided, intersect (empty list = no results)
+    if scope_ids is not None:
+        if not scope_ids:
+            return []
         scope_set = set(str(sid) for sid in scope_ids)
         filtered = [
             tid for tid in all_protocol_ids
