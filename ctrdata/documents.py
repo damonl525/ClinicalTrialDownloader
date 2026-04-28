@@ -10,6 +10,7 @@ download_one_trial_doc() (in process module), resume file management.
 import os
 import json
 import logging
+import shutil
 from typing import Any, Callable, Dict, List
 
 from core.exceptions import DatabaseError, CtrdataError
@@ -17,6 +18,46 @@ from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Flatten trial subdirectories into parent directory
+# ============================================================
+
+def _flatten_trial_docs(documents_path: str, trial_id: str):
+    """Move files from trial_id/ subdirectory to parent as trial_id_filename.
+
+    E.g. documents_path/NCT06915701/Prot_000.pdf
+         → documents_path/NCT06915701_Prot_000.pdf
+    """
+    trial_dir = os.path.join(documents_path, trial_id)
+    if not os.path.isdir(trial_dir):
+        return
+
+    for fname in os.listdir(trial_dir):
+        src = os.path.join(trial_dir, fname)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(documents_path, f"{trial_id}_{fname}")
+        # Handle name collision by appending a counter
+        if os.path.exists(dst):
+            base, ext = os.path.splitext(fname)
+            n = 1
+            while os.path.exists(os.path.join(documents_path, f"{trial_id}_{base}_{n}{ext}")):
+                n += 1
+            dst = os.path.join(documents_path, f"{trial_id}_{base}_{n}{ext}")
+        try:
+            shutil.move(src, dst)
+        except OSError as e:
+            logger.warning(f"Failed to flatten {src}: {e}")
+
+    # Remove empty trial directory
+    try:
+        remaining = os.listdir(trial_dir)
+        if not remaining:
+            os.rmdir(trial_dir)
+    except OSError:
+        pass
 
 
 # ============================================================
@@ -171,6 +212,7 @@ def download_documents_for_ids(
                 bridge, tid, documents_path, documents_regexp, per_trial_timeout
             )
             if result.get("ok"):
+                _flatten_trial_docs(documents_path, tid)
                 runtime_completed.append(tid)
                 if callback:
                     callback(i, total_to_process, tid, "ok", None)
