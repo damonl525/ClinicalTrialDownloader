@@ -7,8 +7,6 @@ Handles: find_fields(), extract_to_dataframe(), get_unique_ids().
 """
 
 import os
-import json
-import sqlite3
 import tempfile
 import logging
 from typing import List, Optional
@@ -28,59 +26,51 @@ logger = logging.getLogger(__name__)
 # ============================================================
 
 def get_protocol_trial_ids(bridge, scope_ids: Optional[List[str]] = None) -> List[str]:
-    """Query SQLite directly to find trial IDs that have Protocol documents.
+    """Find trial IDs that have Protocol documents via lightweight R query.
 
-    Pure Python — no R overhead. Reads _json column, parses
-    documentSection.largeDocumentModule.largeDocs to check hasProtocol.
-    Returns list of _id strings.
+    Only extracts documentSection.largeDocumentModule.largeDocs (single field,
+    no concept functions, no dedup). Returns list of _id strings.
     """
     if not bridge.db_path:
         return []
 
-    scope_set = set(scope_ids) if scope_ids else None
+    db = _proc._r_escape(bridge.db_path)
+    col = _proc._r_escape(bridge.collection)
+
+    r_code = _render("protocol_query", db=db, col=col)
 
     try:
-        conn = sqlite3.connect(bridge.db_path)
-        rows = conn.execute(
-            f'SELECT "_id", "_json" FROM "{bridge.collection}"'
-        ).fetchall()
-        conn.close()
+        result = _proc.run_r_json(bridge, r_code, timeout=300)
     except Exception as e:
         logger.warning(f"Protocol query failed: {e}")
         return []
 
-    protocol_ids = []
-    for trial_id, raw_json in rows:
-        if scope_set and not any(trial_id.startswith(str(sid)) for sid in scope_set):
-            continue
-        if not raw_json:
-            continue
-        try:
-            data = json.loads(raw_json)
-            doc_section = data.get("documentSection")
-            if not doc_section:
-                continue
-            large_docs = (
-                doc_section.get("largeDocumentModule", {})
-                .get("largeDocs", [])
-            )
-            if not isinstance(large_docs, list) or not large_docs:
-                continue
+    if not isinstance(result, dict) or not result.get("ok"):
+        logger.warning(f"Protocol query error: {result.get('error', 'unknown')}")
+        return []
 
-            if trial_id.startswith("NCT"):
-                if any(d.get("hasProtocol") for d in large_docs if isinstance(d, dict)):
-                    protocol_ids.append(trial_id)
-            else:
-                if any(
-                    "prot" in str(d.get("filename", "")).lower()
-                    for d in large_docs if isinstance(d, dict)
-                ):
-                    protocol_ids.append(trial_id)
-        except (json.JSONDecodeError, AttributeError):
-            continue
+    all_protocol_ids = result.get("ids", [])
+    if isinstance(all_protocol_ids, str):
+        all_protocol_ids = [all_protocol_ids]
 
-    logger.info(f"Protocol query: {len(rows)} records → {len(protocol_ids)} with Protocol docs")
-    return protocol_ids
+    # If scope_ids provided, intersect
+    if scope_ids:
+        scope_set = set(str(sid) for sid in scope_ids)
+        filtered = [
+            tid for tid in all_protocol_ids
+            if any(str(tid).startswith(str(sid)) for sid in scope_set)
+        ]
+        logger.info(
+            f"Protocol query: {result.get('total', '?')} records, "
+            f"{len(all_protocol_ids)} with Protocol, {len(filtered)} in scope"
+        )
+        return filtered
+
+    logger.info(
+        f"Protocol query: {result.get('total', '?')} records, "
+        f"{len(all_protocol_ids)} with Protocol docs"
+    )
+    return all_protocol_ids
 
 
 # ============================================================
