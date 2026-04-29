@@ -161,9 +161,10 @@ class CtrdataBridge:
         query_index: int = None,
         callback: Callable = None,
         timeout: int = 600,
+        force_update: bool = False,
     ) -> Dict[str, Any]:
         """增量更新查询（querytoupdate）"""
-        return _search.update_last_query(self, query_index, callback, timeout)
+        return _search.update_last_query(self, query_index, callback, timeout, force_update)
 
     # ============================================================
     # 3b. Document downloads

@@ -270,6 +270,7 @@ def update_last_query(
     query_index: int = None,
     callback: Callable = None,
     timeout: int = 600,
+    force_update: bool = False,
 ) -> dict:
     """增量更新查询（querytoupdate）"""
     if not bridge.db_path:
@@ -277,6 +278,7 @@ def update_last_query(
 
     db = _proc._r_escape(bridge.db_path)
     col = _proc._r_escape(bridge.collection)
+    force = "TRUE" if force_update else "FALSE"
 
     if query_index is not None:
         update_val = str(query_index)
@@ -288,6 +290,7 @@ def update_last_query(
         db=db,
         col=col,
         update_val=update_val,
+        force=force,
     )
 
     if callback:

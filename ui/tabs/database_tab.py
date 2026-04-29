@@ -5,6 +5,7 @@ Tab 1: Database — connect to SQLite via nodbi, query history with incremental 
 """
 
 import os
+import math
 import threading
 
 from PySide6.QtWidgets import (
@@ -414,16 +415,25 @@ class DatabaseTab(QWidget):
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
 
-        # Show register-specific warnings
+        force_update = False
         warn_parts = []
         if self._history_data is not None and query_index - 1 < len(self._history_data):
-            reg = str(self._history_data[query_index - 1].get("query-register", ""))
+            row = self._history_data[query_index - 1]
+            reg = str(row.get("query-register", ""))
+            n_records = row.get("query-records", 0)
             if "EUCTR" in reg:
                 warn_parts.append("⚠ EUCTR 仅支持 7 天窗口内的增量更新")
             if "CTIS" in reg:
                 warn_parts.append("⚠ CTIS 无高效增量 API，可能退化为全量下载")
+            if n_records == 0 or n_records == "?" or n_records == "0" or (
+                    isinstance(n_records, float) and math.isnan(n_records)):
+                force_update = True
 
-        msg = f"增量更新查询 #{query_index}？\n\n仅下载上次查询后有更新的试验数据。"
+        if force_update:
+            msg = (f"查询 #{query_index} 上次未获取到数据，将强制重新下载全部数据。\n\n"
+                   "此操作等同重新执行该查询。")
+        else:
+            msg = f"增量更新查询 #{query_index}？\n\n仅下载上次查询后有更新的试验数据。"
         if warn_parts:
             msg += "\n\n" + "\n".join(warn_parts)
 
@@ -431,14 +441,19 @@ class DatabaseTab(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        self.app.status.showMessage(f"正在更新查询 #{query_index}...")
+        status_text = "强制更新" if force_update else "增量更新"
+        self.app.status.showMessage(f"正在{status_text}查询 #{query_index}...")
         self._update_cancelled = False
         self._set_update_buttons_enabled(False)
         self.cancel_update_btn.setVisible(True)
 
+        _force = force_update
+
         def _worker():
             try:
-                result = self.app.bridge.update_last_query(query_index=query_index)
+                result = self.app.bridge.update_last_query(
+                    query_index=query_index, force_update=_force
+                )
                 if self._update_cancelled:
                     self._update_error.emit("用户已取消更新")
                     return

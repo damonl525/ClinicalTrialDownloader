@@ -7,6 +7,7 @@ result <- tryCatch({
     suppressWarnings(suppressMessages({
         ctrdata::ctrLoadQueryIntoDb(
             querytoupdate = {{ update_val }},
+            forcetoupdate = {{ force }},
             con = con, verbose = FALSE
         )
     }}))
