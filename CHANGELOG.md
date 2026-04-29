@@ -4,18 +4,19 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [1.4.3] - 2026-04-28
+## [1.4.3] - 2026-04-29
 
 ### 改进
 - **增量更新支持取消**：Database Tab 增量更新运行中显示「取消更新」按钮，通过 `bridge.cancel()` 终止 R 子进程；更新期间禁用所有「增量更新」按钮防止并发
 - **增量更新 EUCTR/CTIS 限制提示**：确认对话框新增注册中心特定警告（EUCTR 7 天窗口限制、CTIS 无高效增量 API）
 - **Database Tab UI 线程安全**：`get_db_info()` 调用移至后台线程（`_on_update_complete` 和 `_on_delete_complete`），通过 `_db_info_loaded` 信号回传，避免主线程冻结
+- **CLAUDE.md 更新**：补充五标签页架构、per-trial R 子进程、queue-based 超时 IPC、QWebEngine 等关键设计说明
 
 ### 修复
 - **增量更新成功后 UI 无反馈**：Search Tab 的 `_update_last_query` 成功后未发射 `_download_complete` 信号，状态永远卡在「正在更新上次查询」。修复：捕获返回结果并发射信号，同时调用 `_set_downloading(True)` 防止并发操作
 - **增量更新 R 错误被静默吞掉**：`update_last_query.R` 模板的 tryCatch 错误分支输出 `ERROR` 行后继续执行到模板底部的 JSON 输出，返回 `ok=TRUE` 的假成功。重构为 `err_msg <<-` 模式 + if/else 分支，错误时输出 `ok=FALSE` JSON
 - **Service 层 `update_query()` 类型未归一化**：`success`/`failed` 字段未做类型归一化（`dict→list`, `str→[str]`），与 `form_download()` 不一致
-- **CLAUDE.md 更新**：补充五标签页架构、per-trial R 子进程、queue-based 超时 IPC、QWebEngine 等关键设计说明
+- **增量更新 0 条记录查询瞬间无新增**：CTIS/EUCTR 查询上次下载 0 条记录时，增量更新立即返回「无新增」而非重新下载。根因：`ctrLoadQueryIntoDb(querytoupdate)` 基于时间戳增量检查，0 条记录的查询无有效基线。修复：检测 `query-records == 0` 时自动传递 `forcetoupdate = TRUE` 强制重新执行查询；处理 `NaN`/`"?"` 边界条件；确认对话框区分「强制重新下载」和「增量更新」文案
 
 ## [1.4.2] - 2026-04-27
 
