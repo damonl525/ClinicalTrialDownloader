@@ -16,7 +16,7 @@
 - **增量更新成功后 UI 无反馈**：Search Tab 的 `_update_last_query` 成功后未发射 `_download_complete` 信号，状态永远卡在「正在更新上次查询」。修复：捕获返回结果并发射信号，同时调用 `_set_downloading(True)` 防止并发操作
 - **增量更新 R 错误被静默吞掉**：`update_last_query.R` 模板的 tryCatch 错误分支输出 `ERROR` 行后继续执行到模板底部的 JSON 输出，返回 `ok=TRUE` 的假成功。重构为 `err_msg <<-` 模式 + if/else 分支，错误时输出 `ok=FALSE` JSON
 - **Service 层 `update_query()` 类型未归一化**：`success`/`failed` 字段未做类型归一化（`dict→list`, `str→[str]`），与 `form_download()` 不一致
-- **增量更新 0 条记录查询瞬间无新增**：CTIS/EUCTR 查询上次下载 0 条记录时，增量更新立即返回「无新增」而非重新下载。根因：`ctrLoadQueryIntoDb(querytoupdate)` 基于时间戳增量检查，0 条记录的查询无有效基线。修复：检测 `query-records == 0` 时自动传递 `forcetoupdate = TRUE` 强制重新执行查询；处理 `NaN`/`"?"` 边界条件；确认对话框区分「强制重新下载」和「增量更新」文案
+- **增量更新 0 条记录查询瞬间无新增**：CTIS/EUCTR 查询上次下载 0 条记录时，增量更新立即返回「无新增」而非重新下载。根因：`ctrLoadQueryIntoDb(querytoupdate)` 基于时间戳增量检查，0 条记录的查询无有效基线。修复：检测 `query-records == 0` 时自动传递 `forcetoupdate = TRUE` 强制重新执行查询；处理 `NaN`/`"?"` 边界条件；Database Tab 确认对话框区分「强制重新下载」和「增量更新」文案；Search Tab 通过 Service 层查询历史自动检测
 
 ## [1.4.2] - 2026-04-27
 

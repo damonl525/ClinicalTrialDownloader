@@ -8,6 +8,7 @@ is testable without Qt dependencies.
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -276,9 +277,24 @@ class DownloadService:
             _ui_log(msg)
             logger.info(msg)
 
+        # Auto-detect 0-record queries and force full re-download
+        force_update = False
+        try:
+            history = self.bridge.get_query_history()
+            if history is not None and not history.empty:
+                row = history.iloc[-1] if query_idx is None else history.iloc[query_idx - 1]
+                n_records = row.get("query-records", 0)
+                if n_records == 0 or n_records == "?" or n_records == "0" or (
+                        isinstance(n_records, float) and math.isnan(n_records)):
+                    force_update = True
+                    _log("上次查询记录数为 0，将强制重新下载")
+        except Exception:
+            pass
+
         result = self.bridge.update_last_query(
             query_index=query_idx,
             callback=lambda line: _log(line),
+            force_update=force_update,
         )
 
         # Normalize success/failed types (same as form_download)
