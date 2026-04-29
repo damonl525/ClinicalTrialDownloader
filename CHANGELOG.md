@@ -27,6 +27,7 @@
 - **Protocol 提取性能瓶颈**：修复 Protocol 过滤后提取 10 条记录仍需 84 秒的问题。原因是 SQL 临时表预过滤因 R 代码引号嵌套错误静默失败（`sprintf` 中的单引号与 LIKE 子句单引号冲突），导致 `dbGetFieldsIntoDf()` 提取全库 2026 条记录后再过滤。改用 R 双引号字符串避免引号冲突，临时表预过滤生效后提取仅处理目标记录
 - **文档下载 resume 文件不区分下载目录**：断点续传文件命名仅基于数据库名，未包含下载目录标识。换目录后旧 resume 仍然生效，导致新目录跳过已完成的 trial 且不下载任何文件，但结果却显示全部成功。修复：resume 文件名纳入 `documents_path` 哈希（不同目录独立 resume），session hash 纳入目录路径，恢复时验证目标目录确实存在文件才标记为已完成
 - **R 报告成功但实际无文档被误标为已下载**：`download_one_trial_doc` 的 R 子进程返回 `ok=true` 仅表示查询未报错，不代表文档已保存。现增加文件系统验证：下载后检查目标目录是否确实存在该 trial 的文档文件，无文件则标记为「未找到文档」而非「成功」
+- **超时对话框「继续等待」被误判为「取消」**：根因是跨线程 Signal 通信使用 `threading.Event` + 可变 `ctx` dict 传递。PySide6 跨线程 `Signal.emit(dict)` 会对 dict 深拷贝，导致 GUI 线程修改的 `ctx["choice"]` 与 worker 线程等待的 `ctx["event"]` 属于不同对象。`event.wait()` 因拷贝隔离永远等不到信号，`ctx["choice"]` 仍为 None，`None or "cancel"` → 即使用户点击「继续」，结果也是「取消」。重写为 `queue.Queue` 机制：Signal 仅传递不可变数据（elapsed/register），queue 存储在 SearchTab 实例上（不走 Signal payload），彻底消除深拷贝问题。同时增加：dialog 异常关闭默认为 continue（非 cancel）、queue.get(timeout=300) 防止死锁、重入防护避免同时弹出多个 dialog
 
 ## [1.4.1] - 2026-04-25
 

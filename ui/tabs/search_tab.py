@@ -5,6 +5,7 @@ Tab 2: Search & Download — three modes: form search, URL paste, trial ID looku
 """
 
 import logging
+import queue
 import re
 import threading
 import webbrowser
@@ -131,6 +132,8 @@ class SearchTab(QWidget):
         self._generated_urls = {}
         self.is_downloading = False
         self._dl_service = None
+        self._timeout_queue = None  # queue.Queue, avoids PySide6 cross-thread dict copy
+        self._timeout_dlg_active = False  # reentrancy guard
         self._setup_ui()
 
         # Connect signals
@@ -810,64 +813,97 @@ class SearchTab(QWidget):
     # ── Timeout handling ──
 
     def _on_timeout_request(self, ctx: dict):
-        """Show timeout dialog on GUI thread (called via signal)."""
-        elapsed = ctx.get("elapsed", 600)
-        register = ctx.get("register", "")
+        """Show timeout dialog on GUI thread (called via signal from worker)."""
+        # Reentrancy guard: if a dialog is already showing and a second
+        # timeout fires, write "continue" to the current queue so the
+        # worker doesn't hang, then ignore the duplicate signal.
+        if self._timeout_dlg_active:
+            logger.warning("Timeout dialog already active, ignoring duplicate signal")
+            return
 
-        # Disable progress cancel button to prevent double-action
-        self.progress_panel.set_cancel_enabled(False)
+        self._timeout_dlg_active = True
+        try:
+            elapsed = ctx.get("elapsed", 600)
+            register = ctx.get("register", "")
 
-        dlg = QMessageBox(self)
-        dlg.setWindowTitle("下载超时")
-        dlg.setIcon(QMessageBox.Warning)
+            # Disable progress cancel button to prevent double-action
+            self.progress_panel.set_cancel_enabled(False)
 
-        reg_text = f"（注册中心: {register}）" if register else ""
-        dlg.setText(
-            f"下载已运行 {elapsed} 秒仍未完成{reg_text}\n\n"
-            "可能原因：\n"
-            "  • 搜索结果条目过多\n"
-            "  • 网络连接缓慢\n\n"
-            "请选择操作："
-        )
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("下载超时")
+            dlg.setIcon(QMessageBox.Warning)
 
-        continue_btn = dlg.addButton("继续等待", QMessageBox.AcceptRole)
-        skip_btn = dlg.addButton("跳过此注册中心", QMessageBox.RejectRole)
-        cancel_btn = dlg.addButton("取消全部下载", QMessageBox.DestructiveRole)
+            reg_text = f"（注册中心: {register}）" if register else ""
+            dlg.setText(
+                f"下载已运行 {elapsed} 秒仍未完成{reg_text}\n\n"
+                "可能原因：\n"
+                "  • 搜索结果条目过多\n"
+                "  • 网络连接缓慢\n\n"
+                "请选择操作："
+            )
 
-        # Default to "continue" (Enter key), Escape = "skip" (not cancel)
-        dlg.setDefaultButton(continue_btn)
-        dlg.setEscapeButton(skip_btn)
+            continue_btn = dlg.addButton("继续等待", QMessageBox.AcceptRole)
+            skip_btn = dlg.addButton("跳过此注册中心", QMessageBox.RejectRole)
+            cancel_btn = dlg.addButton("取消全部下载", QMessageBox.DestructiveRole)
 
-        dlg.exec()
+            # Default to "continue" (Enter key), Escape = "skip" (not cancel)
+            dlg.setDefaultButton(continue_btn)
+            dlg.setEscapeButton(skip_btn)
 
-        clicked = dlg.clickedButton()
-        if clicked == continue_btn:
-            ctx["choice"] = "continue"
-            # Re-enable cancel for next potential timeout
-            self.progress_panel.set_cancel_enabled(True)
-        elif clicked == skip_btn:
-            ctx["choice"] = "skip"
-            self.progress_panel.update_detail("正在跳过...")
-        else:
-            ctx["choice"] = "cancel"
-            self.progress_panel.update_detail("正在取消...")
+            dlg.exec()
 
-        logger.debug(f"Timeout dialog choice: {ctx['choice']} (clicked={clicked})")
-        ctx["event"].set()
+            clicked = dlg.clickedButton()
+            if clicked == continue_btn:
+                choice = "continue"
+                self.progress_panel.set_cancel_enabled(True)
+            elif clicked == skip_btn:
+                choice = "skip"
+                self.progress_panel.update_detail("正在跳过...")
+            elif clicked == cancel_btn:
+                choice = "cancel"
+                self.progress_panel.update_detail("正在取消...")
+            else:
+                # Dialog dismissed without explicit choice (X button, etc.)
+                choice = "continue"
+                self.progress_panel.set_cancel_enabled(True)
+
+            logger.debug(
+                f"Timeout dialog choice: {choice} "
+                f"(register={register}, elapsed={elapsed}s, clicked={clicked})"
+            )
+
+            # Write choice to the queue so worker thread can read it.
+            # Using queue.Queue avoids PySide6 cross-thread dict deep-copy issues.
+            if self._timeout_queue is not None:
+                self._timeout_queue.put(choice)
+        finally:
+            self._timeout_dlg_active = False
 
     def _make_timeout_callback(self):
-        """Create a thread-safe timeout callback for DownloadService."""
+        """Create a thread-safe timeout callback for DownloadService.
+
+        Uses queue.Queue instead of threading.Event in signal payload
+        to avoid PySide6 deep-copying mutable objects in cross-thread signals.
+        """
         def on_timeout(elapsed: int, register: str) -> str:
-            event = threading.Event()
-            ctx = {
-                "event": event,
-                "elapsed": elapsed,
-                "register": register,
-                "choice": None,
-            }
-            self._timeout_request.emit(ctx)
-            event.wait()  # Block worker thread until user responds
-            choice = ctx["choice"] or "cancel"
-            logger.debug(f"Timeout callback returning: '{choice}' (ctx.choice={ctx['choice']})")
-            return choice
+            q = queue.Queue()
+            self._timeout_queue = q
+            try:
+                # Emit signal with immutable data only
+                self._timeout_request.emit({"elapsed": elapsed, "register": register})
+                # Block until GUI thread writes response, with a generous timeout
+                choice = q.get(timeout=300)  # 5 minutes max wait
+                logger.debug(
+                    f"Timeout callback received choice: '{choice}' "
+                    f"(register={register}, elapsed={elapsed}s)"
+                )
+                return choice
+            except queue.Empty:
+                logger.warning(
+                    f"Timeout dialog response timed out after 300s "
+                    f"(register={register}), defaulting to continue"
+                )
+                return "continue"
+            finally:
+                self._timeout_queue = None
         return on_timeout
