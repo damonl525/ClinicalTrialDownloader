@@ -336,14 +336,25 @@ class SearchTab(QWidget):
         adv_row6.setSpacing(SPACING["md"])
         adv_row6.addWidget(QLabel("注册中心:"))
         self.register_checks = {}
+        _reg_desc = {
+            "CTGOV2": "ClinicalTrials.gov (美国)",
+            "EUCTR": "EU CTR (欧盟)",
+            "ISRCTN": "ISRCTN (英国)",
+            "CTIS": "CTIS (欧盟新)",
+        }
         for key, name in SUPPORTED_REGISTERS.items():
-            cb = QCheckBox(key)
+            cb = QCheckBox(_reg_desc.get(key, key))
             cb.setChecked(key in ("CTGOV2",))
-            cb.setToolTip(f"{name}\n勾选要搜索的临床试验注册中心，可同时搜索多个，结果会合并去重。")
             self.register_checks[key] = cb
             adv_row6.addWidget(cb)
         adv_row6.addStretch()
         adv_layout.addLayout(adv_row6)
+
+        # CTIS warning hint
+        ctis_hint = QLabel("⚠ CTIS 无公开 API，下载易超时；CTGOV2 覆盖面最广，通常够用")
+        ctis_hint.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        ctis_hint.setContentsMargins(SPACING["lg"] + SPACING["sm"], 0, 0, 0)
+        adv_layout.addWidget(ctis_hint)
 
         self._advanced_card.set_body_layout(adv_layout)
         form.addWidget(self._advanced_card)
