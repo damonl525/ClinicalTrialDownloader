@@ -11,6 +11,7 @@
 - **增量更新 EUCTR/CTIS 限制提示**：确认对话框新增注册中心特定警告（EUCTR 7 天窗口限制、CTIS 无高效增量 API）
 - **Database Tab UI 线程安全**：`get_db_info()` 调用移至后台线程（`_on_update_complete` 和 `_on_delete_complete`），通过 `_db_info_loaded` 信号回传，避免主线程冻结
 - **CLAUDE.md 更新**：补充五标签页架构、per-trial R 子进程、queue-based 超时 IPC、QWebEngine 等关键设计说明
+- **FDA 搜索支持纯日期查询**：移除药物名称必填限制，支持仅输入日期范围、高级筛选条件进行搜索（药物名称、日期、高级筛选至少填一个）
 
 ### 修复
 - **增量更新成功后 UI 无反馈**：Search Tab 的 `_update_last_query` 成功后未发射 `_download_complete` 信号，状态永远卡在「正在更新上次查询」。修复：捕获返回结果并发射信号，同时调用 `_set_downloading(True)` 防止并发操作

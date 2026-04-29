@@ -93,7 +93,7 @@ class FdaTab(QWidget):
 
         search_row.addWidget(QLabel("通用名/商品名:"))
         self.drug_input = QLineEdit()
-        self.drug_input.setPlaceholderText("输入药物通用名或商品名")
+        self.drug_input.setPlaceholderText("输入药物名称（可选）")
         self.drug_input.returnPressed.connect(self._do_search)
         search_row.addWidget(self.drug_input, stretch=2)
 
@@ -163,7 +163,7 @@ class FdaTab(QWidget):
     # ================================================================
 
     def _build_result_table(self, parent_layout):
-        self.result_label = QLabel("输入药物名称搜索 FDA 审评资料")
+        self.result_label = QLabel("输入药物名称或日期范围搜索 FDA 审评资料")
         self.result_label.setStyleSheet("color: #64748B;")
         parent_layout.addWidget(self.result_label)
 
@@ -284,8 +284,14 @@ class FdaTab(QWidget):
 
     def _do_search(self):
         params = self._collect_params()
-        if not params.get("drug_name"):
-            QMessageBox.warning(self, "提示", "请输入药物通用名或商品名")
+        has_drug = bool(params.get("drug_name"))
+        has_date = bool(params.get("date_from") or params.get("date_to"))
+        has_advanced = any(k in params for k in (
+            "manufacturer", "route", "pharm_class",
+            "application_type", "review_priority", "submission_class",
+        ))
+        if not (has_drug or has_date or has_advanced):
+            QMessageBox.warning(self, "提示", "请至少输入一个搜索条件（药物名称、日期范围或高级筛选）")
             return
 
         self._current_params = params
