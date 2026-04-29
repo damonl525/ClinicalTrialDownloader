@@ -86,6 +86,9 @@ def generate_queries(
 
     params_str = ",\n    ".join(params)
 
+    logger.debug(f"ctrGenerateQueries params: population={population!r}, phase={phase!r}, "
+                 f"recruitment={recruitment!r}, onlyMedIntervTrials={only_med_interv_trials}")
+
     r_code = _render("generate_queries", params=params_str)
 
     proc = _proc.run_r(bridge, r_code)

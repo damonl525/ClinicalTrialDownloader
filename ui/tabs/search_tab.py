@@ -504,14 +504,16 @@ class SearchTab(QWidget):
         if not self.app.bridge or not self.app.bridge.db_path:
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
+        self._set_downloading(True)
         self.progress_panel.update_detail("正在更新上次查询...")
 
         def _worker():
             svc = self._get_dl_service()
             try:
-                svc.update_query(
+                result = svc.update_query(
                     on_log=lambda msg: self._status_msg.emit(msg),
                 )
+                self._download_complete.emit(result or {})
             except Exception as e:
                 self._download_error.emit(str(e))
 

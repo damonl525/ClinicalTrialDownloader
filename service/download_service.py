@@ -75,7 +75,7 @@ class DownloadService:
 
         _log(f"生成了 {len(filtered_urls)} 个 URL")
         for reg, url in filtered_urls.items():
-            _log(f"  {reg}: {url[:100]}...")
+            _log(f"  {reg}: {url[:200]}")
 
         if not filtered_urls:
             return DownloadResult(cancelled=False, urls=filtered_urls)
@@ -281,10 +281,19 @@ class DownloadService:
             callback=lambda line: _log(line),
         )
 
+        # Normalize success/failed types (same as form_download)
+        s = result.get("success", [])
+        if not isinstance(s, list):
+            s = [s] if s else []
+        result["success"] = s
+
+        f = result.get("failed", [])
+        if not isinstance(f, list):
+            f = [f] if f else []
+        result["failed"] = f
+
         n = result.get("n", 0)
-        s_count = len(result.get("success", []))
-        f_count = len(result.get("failed", []))
-        _log(f"更新完成: 新增 {n} 条, 成功 {s_count}, 失败 {f_count}")
+        _log(f"更新完成: 新增 {n} 条, 成功 {len(s)}, 失败 {len(f)}")
 
         return result
 

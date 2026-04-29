@@ -31,11 +31,13 @@ ruff check .
 
 ## Architecture
 
-**Three-tab GUI mapped to ctrdata's workflow:**
+**Five-tab GUI:**
 
 1. **Tab 1 — Database** (`ui/tabs/database_tab.py`): Connect to SQLite via `nodbi::src_sqlite()`, query history with incremental update buttons
 2. **Tab 2 — Search & Download** (`ui/tabs/search_tab.py`): Three search modes — form search (ctrGenerateQueries), paste URL, by trial ID. Multi-register support with preview count
 3. **Tab 3 — Extract & Export** (`ui/tabs/export_tab.py`): Extract with `f.*` concept functions → filter (phase/status/date/condition/intervention) → export CSV → download documents for filtered trials only
+4. **Tab 4 — FDA** (`ui/tabs/fda_tab.py`): Independent tab — search openFDA directly (no R/database needed), parse TOC.html via QWebEngine to list available PDFs, batch download review documents
+5. **Tab 5 — CDE** (`ui/tabs/cde_tab.py`): Search CDE (国家药监局药审中心) drug listing, download review reports and package insert PDFs via QWebEngine (bypasses RuiShu WAF)
 
 **Data flow:** `main.py` → `MainWindow` (`ui/main_window.py`) holds shared state (`self.bridge`, `self.filtered_ids`, `self.current_data`, `self.current_search_ids`) and passes itself to tab constructors via `app` parameter.
 
@@ -55,14 +57,16 @@ ruff check .
 
 ## Key Patterns
 
-- **Two-phase download**: Phase 1 downloads data only (`documents.path=NULL`), Phase 2 downloads documents for filtered trials only (per-trial loop with `PROGRESS\t` line protocol)
+- **Two-phase download**: Phase 1 downloads data only (`documents.path=NULL`), Phase 2 downloads documents for filtered trials only (per-trial independent R subprocess, each with own timeout isolation)
 - **Multi-register search**: `generate_queries()` calls `ctrGenerateQueries()` to produce URLs for CTGOV2/EUCTR/ISRCTN/CTIS simultaneously; `load_into_db()` supports multi-URL download
 - **Preview count**: `count_trials()` calls `ctrLoadQueryIntoDb(only.count=TRUE)` before downloading
 - **Incremental update**: `update_last_query()` calls `ctrLoadQueryIntoDb(querytoupdate=N)` to update specific historical queries
 - **Post-download filtering**: All filters (phase, status, date, condition, intervention) are applied in Python/pandas after extraction, not in R
-- **Resume/checkpoint**: Document downloads save progress to `{db_basename}_doc_resume.json` via atomic `os.replace()`, updated after each trial
+- **Resume/checkpoint**: Document downloads save progress to `{db_basename}_{path_hash}_doc_resume.json` via atomic `os.replace()`, filename includes `documents_path` hash for directory isolation, updated after each trial. Validates files exist on disk before marking trial as completed
 - **Process tracking**: `self._current_process` stores the active R subprocess; `cancel()` calls `kill()` + `wait(timeout=5)`
 - **Concept functions**: `f.*` functions (e.g., `f.trialPhase`, `f.startDate`) standardize fields across registries. R output columns use `.` prefix (e.g., `.trialPhase`)
+- **Timeout IPC**: Cross-thread timeout dialog uses `queue.Queue` on widget instance (NOT in Signal payload — PySide6 `Signal.emit(dict)` deep-copies the dict, breaking `threading.Event` and mutable references)
+- **QWebEngine**: FDA and CDE tabs use `QWebEnginePage`/`QWebEngineProfile` for web scraping and download (bypasses CDN bot detection and WAF)
 
 ## Constants and Configuration
 
@@ -104,3 +108,6 @@ ruff check .
 - `CollapsibleCard` uses objectName-based QSS (`collapsibleHeader`, `collapsibleBody`) for theme compatibility
 - Settings dialog (`ui/settings_dialog.py`) uses QSettings for persistence (Windows registry)
 - Table right-click context menu in ExportTab: copy cell, copy row, copy selected, export selected CSV
+- FDA tab operates independently — no database or R environment required, queries openFDA API directly
+- CDE tab uses QWebEngine to bypass RuiShu (瑞数) WAF; reuses a single `QWebEnginePage` for session persistence
+- CTIS registry has no public API (web scraping only), downloads are inherently slow and timeout-prone

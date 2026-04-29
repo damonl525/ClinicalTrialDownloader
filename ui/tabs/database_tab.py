@@ -26,6 +26,7 @@ class DatabaseTab(QWidget):
     _history_loaded = Signal(object)
     _update_complete = Signal(int, int, int, int)  # query_index, n, success, failed
     _update_error = Signal(str)
+    _db_info_loaded = Signal(object)  # dict with db info
     _delete_complete = Signal(int, int)  # deleted, remaining
     _delete_error = Signal(str)
 
@@ -33,6 +34,7 @@ class DatabaseTab(QWidget):
         super().__init__(parent)
         self.app = main_window
         self._history_data = None
+        self._update_cancelled = False
         self._setup_ui()
 
         # Connect signals for thread-safe UI updates
@@ -41,6 +43,7 @@ class DatabaseTab(QWidget):
         self._update_error.connect(self._on_update_error)
         self._delete_complete.connect(self._on_delete_complete)
         self._delete_error.connect(self._on_delete_error)
+        self._db_info_loaded.connect(self._on_db_info_loaded)
 
         # Initialize env indicator from current state
         self._update_env_indicator()
@@ -175,6 +178,12 @@ class DatabaseTab(QWidget):
         hist_header = QHBoxLayout()
         hist_header.addWidget(QLabel("查询历史"))
         hist_header.addStretch()
+        self.cancel_update_btn = QPushButton("取消更新")
+        self.cancel_update_btn.setObjectName("danger")
+        self.cancel_update_btn.setFixedWidth(80)
+        self.cancel_update_btn.setVisible(False)
+        self.cancel_update_btn.clicked.connect(self._cancel_update)
+        hist_header.addWidget(self.cancel_update_btn)
         self.refresh_btn = QPushButton("刷新历史")
         self.refresh_btn.setObjectName("secondary")
         self.refresh_btn.clicked.connect(self._refresh_history)
@@ -390,6 +399,7 @@ class DatabaseTab(QWidget):
             query_idx = idx + 1  # R uses 1-based indexing
             update_btn = QPushButton("增量更新")
             update_btn.setObjectName("secondary")
+            update_btn.setProperty("role", "incremental_update")
             update_btn.setFixedWidth(100)
             update_btn.setToolTip("重新执行该历史查询，仅下载新增或有变更的试验数据。")
             update_btn.clicked.connect(
@@ -404,19 +414,34 @@ class DatabaseTab(QWidget):
             QMessageBox.critical(self, "错误", "请先连接数据库")
             return
 
-        reply = QMessageBox.question(
-            self, "确认更新",
-            f"增量更新查询 #{query_index}？\n\n"
-            "仅下载上次查询后有更新的试验数据。",
-        )
+        # Show register-specific warnings
+        warn_parts = []
+        if self._history_data is not None and query_index - 1 < len(self._history_data):
+            reg = str(self._history_data[query_index - 1].get("query-register", ""))
+            if "EUCTR" in reg:
+                warn_parts.append("⚠ EUCTR 仅支持 7 天窗口内的增量更新")
+            if "CTIS" in reg:
+                warn_parts.append("⚠ CTIS 无高效增量 API，可能退化为全量下载")
+
+        msg = f"增量更新查询 #{query_index}？\n\n仅下载上次查询后有更新的试验数据。"
+        if warn_parts:
+            msg += "\n\n" + "\n".join(warn_parts)
+
+        reply = QMessageBox.question(self, "确认更新", msg)
         if reply != QMessageBox.Yes:
             return
 
         self.app.status.showMessage(f"正在更新查询 #{query_index}...")
+        self._update_cancelled = False
+        self._set_update_buttons_enabled(False)
+        self.cancel_update_btn.setVisible(True)
 
         def _worker():
             try:
                 result = self.app.bridge.update_last_query(query_index=query_index)
+                if self._update_cancelled:
+                    self._update_error.emit("用户已取消更新")
+                    return
                 n = result.get("n", 0)
                 s = result.get("success", [])
                 f = result.get("failed", [])
@@ -424,11 +449,29 @@ class DatabaseTab(QWidget):
                 f_count = len(f) if isinstance(f, list) else (1 if f else 0)
                 self._update_complete.emit(query_index, n, s_count, f_count)
             except Exception as e:
-                self._update_error.emit(str(e))
+                if not self._update_cancelled:
+                    self._update_error.emit(str(e))
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _cancel_update(self):
+        self._update_cancelled = True
+        if self.app.bridge:
+            self.app.bridge.cancel()
+        self.app.status.showMessage("正在取消更新...")
+
+    def _set_update_buttons_enabled(self, enabled: bool):
+        """Enable/disable all incremental update buttons during update."""
+        for i in range(self._history_layout.count()):
+            row = self._history_layout.itemAt(i)
+            if row and row.widget():
+                btn = row.widget().findChild(QPushButton)
+                if btn and btn.property("role") == "incremental_update":
+                    btn.setEnabled(enabled)
+
     def _on_update_complete(self, query_index, n, success, failed):
+        self._set_update_buttons_enabled(True)
+        self.cancel_update_btn.setVisible(False)
         self.app.status.showMessage(f"查询 #{query_index} 更新完成: {n} 条记录")
         QMessageBox.information(
             self, "更新完成",
@@ -436,22 +479,31 @@ class DatabaseTab(QWidget):
             f"更新记录: {n}\n成功: {success}\n失败: {failed}",
         )
         self._refresh_history()
-        # Update db info
-        if self.app.bridge:
-            try:
-                info = self.app.bridge.get_db_info()
-                total = info.get("total_records", "?")
-                self.info_label.setText(
-                    f"路径: {info.get('path', '')}\n"
-                    f"集合: {info.get('collection', '')}  |  记录数: {total}"
-                )
-            except Exception:
-                pass
         self.app.update_db_status()
+        # Refresh db info in background (avoid UI freeze)
+        if self.app.bridge:
+            def _worker():
+                try:
+                    info = self.app.bridge.get_db_info()
+                    self._db_info_loaded.emit(info)
+                except Exception:
+                    pass
+            threading.Thread(target=_worker, daemon=True).start()
 
     def _on_update_error(self, error_msg):
-        self.app.status.showMessage("更新失败")
-        QMessageBox.critical(self, "更新失败", error_msg)
+        self._set_update_buttons_enabled(True)
+        self.cancel_update_btn.setVisible(False)
+        self.app.status.showMessage("更新失败" if "取消" not in error_msg else "更新已取消")
+        QMessageBox.warning(self, "更新终止", error_msg)
+
+    def _on_db_info_loaded(self, info):
+        if not info:
+            return
+        total = info.get("total_records", "?")
+        self.info_label.setText(
+            f"路径: {info.get('path', '')}\n"
+            f"集合: {info.get('collection', '')}  |  记录数: {total}"
+        )
 
     # ── Record deletion ──
 
@@ -540,20 +592,16 @@ class DatabaseTab(QWidget):
         self.app.status.showMessage(msg)
         QMessageBox.information(self, "删除完成", msg)
         self._refresh_history()
-        # Update db info
-        if self.app.bridge:
-            try:
-                info = self.app.bridge.get_db_info()
-                total = info.get("total_records", "?")
-                path = self.app.bridge.db_path
-                collection = self.app.bridge.collection
-                self.info_label.setText(
-                    f"已连接: {os.path.basename(path)}\n"
-                    f"路径: {path}  |  集合: {collection}  |  记录数: {total}"
-                )
-            except Exception:
-                pass
         self.app.update_db_status()
+        # Refresh db info in background (avoid UI freeze)
+        if self.app.bridge:
+            def _worker():
+                try:
+                    info = self.app.bridge.get_db_info()
+                    self._db_info_loaded.emit(info)
+                except Exception:
+                    pass
+            threading.Thread(target=_worker, daemon=True).start()
 
     def _on_delete_error(self, error_msg):
         self._set_connected_state(True)
