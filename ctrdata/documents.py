@@ -25,28 +25,34 @@ logger = logging.getLogger(__name__)
 # Flatten trial subdirectories into parent directory
 # ============================================================
 
-def _flatten_trial_docs(documents_path: str, trial_id: str):
+def _flatten_trial_docs(documents_path: str, trial_id: str) -> int:
     """Move files from trial_id/ subdirectory to parent as trial_id_filename.
 
     E.g. documents_path/NCT06915701/Prot_000.pdf
-         → documents_path/NCT06915701_Prot_000.pdf
+         -> documents_path/NCT06915701_Prot_000.pdf
+
+    Returns:
+        Number of files skipped (already existed at destination).
     """
     trial_dir = os.path.join(documents_path, trial_id)
     if not os.path.isdir(trial_dir):
-        return
+        return 0
 
+    skipped = 0
     for fname in os.listdir(trial_dir):
         src = os.path.join(trial_dir, fname)
         if not os.path.isfile(src):
             continue
         dst = os.path.join(documents_path, f"{trial_id}_{fname}")
-        # Handle name collision by appending a counter
+        # Skip if destination already exists
         if os.path.exists(dst):
-            base, ext = os.path.splitext(fname)
-            n = 1
-            while os.path.exists(os.path.join(documents_path, f"{trial_id}_{base}_{n}{ext}")):
-                n += 1
-            dst = os.path.join(documents_path, f"{trial_id}_{base}_{n}{ext}")
+            logger.info("文件已存在，跳过: %s", os.path.basename(dst))
+            skipped += 1
+            try:
+                os.unlink(src)
+            except OSError:
+                pass
+            continue
         try:
             shutil.move(src, dst)
         except OSError as e:
@@ -59,6 +65,11 @@ def _flatten_trial_docs(documents_path: str, trial_id: str):
             os.rmdir(trial_dir)
     except OSError:
         pass
+
+    if skipped:
+        logger.info("Trial %s: 跳过 %d 个已存在文件", trial_id, skipped)
+
+    return skipped
 
 
 # ============================================================
@@ -232,11 +243,13 @@ def download_documents_for_ids(
                 bridge, tid, documents_path, documents_regexp, per_trial_timeout
             )
             if result.get("ok"):
-                _flatten_trial_docs(documents_path, tid)
+                file_skips = _flatten_trial_docs(documents_path, tid)
                 if _trial_has_docs(documents_path, tid):
                     runtime_completed.append(tid)
                     if callback:
                         callback(i, total_to_process, tid, "ok", None)
+                        if file_skips:
+                            callback(i, total_to_process, tid, "file_skip", str(file_skips))
                 else:
                     runtime_failed[tid] = "No documents found for this trial"
                     if callback:
