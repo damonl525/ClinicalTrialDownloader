@@ -11,9 +11,11 @@ import hashlib
 import os
 import json
 import logging
+import re
 import shutil
 from typing import Any, Callable, Dict, List
 
+from core.constants import classify_registry
 from core.exceptions import DatabaseError, CtrdataError
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
@@ -182,6 +184,22 @@ def download_documents_for_ids(
         raise DatabaseError("请先连接数据库")
     if not trial_ids:
         return {"ok": True, "success": [], "failed": {}, "skipped": {}, "total": 0}
+
+    # ISRCTN document downloads require the chromote R package
+    has_isrctn = any(classify_registry(tid) == "ISRCTN" for tid in trial_ids)
+    if has_isrctn:
+        check_code = 'cat(requireNamespace("chromote", quietly=TRUE))'
+        try:
+            proc = _proc.run_r(bridge, check_code, timeout=15)
+            if "FALSE" in proc.stdout.strip():
+                raise CtrdataError(
+                    "ISRCTN 文档下载需要 R 包 chromote。\n"
+                    "请在 R 控制台执行: install.packages('chromote')"
+                )
+        except CtrdataError:
+            raise
+        except Exception:
+            pass  # if check fails, let the download attempt proceed
 
     os.makedirs(documents_path, exist_ok=True)
 

@@ -309,10 +309,17 @@ def extract_to_dataframe(
                 df = df[mask]
 
             # Post-download filtering: phase / status
+            _n = len(df)
             if filter_phase and ".trialPhase" in df.columns:
                 df = df[df[".trialPhase"].astype(str).str.contains(filter_phase, case=False, na=False)]
+                if len(df) != _n:
+                    logger.info(f"Filter phase '{filter_phase}': {_n} → {len(df)} rows")
+                    _n = len(df)
             if filter_status and ".statusRecruitment" in df.columns:
                 df = df[df[".statusRecruitment"].astype(str).str.contains(filter_status, case=False, na=False)]
+                if len(df) != _n:
+                    logger.info(f"Filter status '{filter_status}': {_n} → {len(df)} rows")
+                    _n = len(df)
 
             # Date range filter — NaT values are preserved
             if (filter_date_start or filter_date_end) and ".startDate" in df.columns:
@@ -323,6 +330,9 @@ def extract_to_dataframe(
                 if filter_date_end:
                     mask &= (df[".startDate"] <= filter_date_end) | df[".startDate"].isna()
                 df = df[mask]
+                if len(df) != _n:
+                    logger.info(f"Filter date [{filter_date_start}~{filter_date_end}]: {_n} → {len(df)} rows")
+                    _n = len(df)
 
             # Condition keyword filter
             if filter_condition:
@@ -334,6 +344,9 @@ def extract_to_dataframe(
                         for col in search_cols:
                             kw_mask |= df[col].astype(str).str.contains(kw, case=False, na=False, regex=False)
                         df = df[kw_mask]
+                    if len(df) != _n:
+                        logger.info(f"Filter condition '{filter_condition}': {_n} → {len(df)} rows")
+                        _n = len(df)
 
             # Intervention keyword filter
             if filter_intervention:
@@ -345,6 +358,9 @@ def extract_to_dataframe(
                         for col in search_cols:
                             kw_mask |= df[col].astype(str).str.contains(kw, case=False, na=False, regex=False)
                         df = df[kw_mask]
+                    if len(df) != _n:
+                        logger.info(f"Filter intervention '{filter_intervention}': {_n} → {len(df)} rows")
+                        _n = len(df)
 
             return df
         else:
