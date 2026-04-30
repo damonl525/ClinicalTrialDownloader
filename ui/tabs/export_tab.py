@@ -30,7 +30,7 @@ from ui.widgets.progress import ProgressPanel
 from ui.widgets.table_model import PandasTableModel
 from core.constants import (
     CONCEPT_FUNCTIONS, DEFAULT_CONCEPTS, TREEVIEW_DISPLAY_LIMIT,
-    DOC_TYPE_OPTIONS, FILTER_PHASES, FILTER_STATUSES,
+    DOC_TYPE_OPTIONS, FILTER_PHASES, FILTER_STATUSES, classify_registry,
 )
 from service.extract_service import ExtractService
 
@@ -300,8 +300,9 @@ class ExportTab(QWidget):
 
         self.protocol_only_check = QCheckBox("仅含Protocol文档")
         self.protocol_only_check.setToolTip(
-            "提取后仅保留有Protocol（研究方案）文档的试验。\n"
-            "基于数据库中的文档元数据过滤，无需额外网络请求。"
+            "仅含Protocol（研究方案）文档的试验。\n"
+            "CTGOV2/ISRCTN 支持精确预过滤；\n"
+            "CTIS/EUCTR 因无元数据，可选择是否纳入。"
         )
         filter_layout.addWidget(self.protocol_only_check)
 
@@ -524,6 +525,31 @@ class ExportTab(QWidget):
 
     # ── Data extraction ──
 
+    def _ask_protocol_scope_dialog(self) -> str | None:
+        """Ask user for Protocol filter scope. Returns 'ctgov_isrctn_only', 'all_registries', or None (cancelled)."""
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Protocol 文档过滤范围")
+        dialog.setText("Protocol 文档过滤范围")
+        dialog.setInformativeText(
+            "CTGOV2 和 ISRCTN 支持精确 Protocol 元数据过滤。\n"
+            "CTIS 和 EUCTR 无文档元数据，需纳入全部记录。\n\n"
+            "选择范围后将开始提取。"
+        )
+        btn_ctgov = dialog.addButton(
+            "仅 CTGOV2 + ISRCTN（推荐）", QMessageBox.AcceptRole
+        )
+        btn_all = dialog.addButton(
+            "全部注册中心", QMessageBox.AcceptRole
+        )
+        btn_cancel = dialog.addButton(QMessageBox.Cancel)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == btn_ctgov:
+            return "ctgov_isrctn_only"
+        if clicked == btn_all:
+            return "all_registries"
+        return None
+
     def _extract(self):
         if self._is_extracting:
             return
@@ -565,6 +591,13 @@ class ExportTab(QWidget):
 
         scope_ids = self._get_scope_ids()
 
+        # GUI thread: ask user for Protocol scope before starting worker
+        scope_choice = None
+        if protocol_filter:
+            scope_choice = self._ask_protocol_scope_dialog()
+            if scope_choice is None:
+                return  # user cancelled
+
         self._is_extracting = True
         self.extract_btn.setEnabled(False)
         self.extract_progress.set_indeterminate()
@@ -575,14 +608,40 @@ class ExportTab(QWidget):
         def _worker():
             try:
                 effective_scope = scope_ids
-                # Protocol pre-filter in background thread
+                # Protocol pre-filter with multi-registry support
                 if protocol_filter:
                     self._log_signal.emit("info", "Protocol 预过滤: 查询数据库...")
                     protocol_ids = self.app.bridge.get_protocol_trial_ids(scope_ids)
+
+                    if scope_ids is not None:
+                        # Scoped mode: scope_ids is the boundary
+                        if scope_choice == "ctgov_isrctn_only":
+                            effective_scope = [
+                                tid for tid in protocol_ids
+                                if classify_registry(tid) in ("CTGOV2", "ISRCTN")
+                            ]
+                        else:  # "all_registries"
+                            euctr_ctis_ids = [
+                                sid for sid in scope_ids
+                                if classify_registry(sid) == "EUCTR_CTIS"
+                            ]
+                            effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
+                    else:
+                        # Full-database mode
+                        if scope_choice == "ctgov_isrctn_only":
+                            effective_scope = protocol_ids
+                        else:  # "all_registries"
+                            all_db_ids = self.app.bridge.get_all_trial_ids()
+                            euctr_ctis_ids = [
+                                tid for tid in all_db_ids
+                                if classify_registry(tid) == "EUCTR_CTIS"
+                            ]
+                            effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
+
                     before = len(scope_ids) if scope_ids else int(getattr(self.app, 'db_total_records', 0))
                     self._log_signal.emit("info",
-                        f"Protocol过滤: {len(protocol_ids)} 条有文档 (跳过 {before - len(protocol_ids)})")
-                    effective_scope = protocol_ids
+                        f"Protocol过滤: {len(effective_scope)} 条 "
+                        f"({'CTGOV2+ISRCTN精确' if scope_choice == 'ctgov_isrctn_only' else '含CTIS/EUCTR全部'})")
                     if not effective_scope:
                         self._extract_complete.emit(pd.DataFrame())
                         return
