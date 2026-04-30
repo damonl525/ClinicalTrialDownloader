@@ -9,7 +9,7 @@
 ### 新功能
 - **下载跳过已有文件**：提取页文档下载、FDA 审评文档下载、CDE 审评文档下载三个模块，遇到目标目录已有同名文件时自动跳过，日志逐条记录，最终统计展示跳过数量
 - **Protocol 多注册中心预过滤**：Protocol 文档过滤扩展支持 ISRCTN（通过 `attachedFiles` 文件名匹配），不再仅限于 CTGOV2；新增 `classify_registry()` 辅助函数按 ID 格式识别注册中心
-- **Protocol 过滤范围选择对话框**：勾选 Protocol 过滤后弹窗让用户选择「仅 CTGOV2 + ISRCTN（推荐）」或「全部注册中心（含 CTIS/EUCTR）」，CTIS/EUCTR 因无文档元数据将纳入全部记录
+- **Protocol 过滤范围选择对话框**：勾选 Protocol 过滤后弹窗让用户选择「仅 CTGOV2 + ISRCTN（推荐）」或「全部注册中心（含 CTIS/EUCTR）」，CTIS/EUCTR 因无文档元数据将纳入全部记录；搜索后自动提取和手动提取均会弹窗确认，用户取消时有日志反馈
 
 ### 改进
 - **R 子进程错误日志增强**：R streaming 输出 `ERROR\t` 行时记录 `logger.warning()`，不再静默丢弃，便于诊断下载失败
@@ -22,7 +22,6 @@
 ### 修复
 - **Protocol 预过滤遗漏非 CTGOV2 记录**：搜索 4508 条跨 4 个注册中心的试验，Protocol 过滤仅返回 63 条 CTGOV2 记录，ISRCTN 的 Protocol 记录完全丢失。根因：`protocol_query.R` 仅查询 CTGOV2 独有的 `hasProtocol` 字段
 - **全库模式 Protocol 过滤缺少 EUCTR/CTIS**：全库模式下选择「全部注册中心」时，使用 `get_all_trial_ids()` 获取所有 ID（非去重），确保 EUCTR/CTIS 记录被正确纳入
-- **自动提取时弹窗干扰**：搜索完成后自动提取（auto_extract）默认使用「仅 CTGOV2+ISRCTN」，不再弹出选择对话框
 - **缺失 jinja2 依赖**：`requirements.txt` 未列出 `jinja2`，全新环境 `pip install -r requirements.txt` 后 import 直接崩溃
 - **仓库清理**：删除根目录 debug 脚本和临时日志文件，`.gitignore` 增加规则防止再次提交
 
