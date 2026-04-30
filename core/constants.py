@@ -5,6 +5,7 @@
 """
 
 import os
+import re
 
 # ================================================================
 # Application identity
@@ -322,3 +323,12 @@ CDE_REG_CLASSES = {
     "4类": "4",
     "5类": "5",
 }
+
+
+def classify_registry(tid: str) -> str:
+    """Classify a trial _id into its registry."""
+    if tid.startswith("NCT"):
+        return "CTGOV2"
+    if tid.startswith("ISRCTN") or re.match(r"^\d{8}$", tid):
+        return "ISRCTN"
+    return "EUCTR_CTIS"
