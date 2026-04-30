@@ -169,17 +169,19 @@ class FilterTableView(QTableView):
     def check_all(self):
         if not self._source_model:
             return
-        for i in range(self._source_model.rowCount()):
-            idx = self._source_model.index(i, 0)
-            self._source_model.setData(idx, Qt.Checked, Qt.CheckStateRole)
+        for i in range(self._proxy_model.rowCount()):
+            proxy_idx = self._proxy_model.index(i, 0)
+            source_idx = self._proxy_model.mapToSource(proxy_idx)
+            self._source_model.setData(source_idx, Qt.Checked, Qt.CheckStateRole)
         self.checked_changed.emit()
 
     def uncheck_all(self):
         if not self._source_model:
             return
-        for i in range(self._source_model.rowCount()):
-            idx = self._source_model.index(i, 0)
-            self._source_model.setData(idx, Qt.Unchecked, Qt.CheckStateRole)
+        for i in range(self._proxy_model.rowCount()):
+            proxy_idx = self._proxy_model.index(i, 0)
+            source_idx = self._proxy_model.mapToSource(proxy_idx)
+            self._source_model.setData(source_idx, Qt.Unchecked, Qt.CheckStateRole)
         self.checked_changed.emit()
 
     def set_check_state(self, row: int, checked: bool):

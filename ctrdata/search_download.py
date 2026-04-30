@@ -94,7 +94,7 @@ def _load_single_url(
                 if isinstance(result, dict) and result.get("ok") is False:
                     raise DownloadError(f"数据下载失败: {result.get('error', '')}")
                 return result
-        return {"ok": True, "raw_output": output}
+        return {"ok": True, "raw_output": output, "warnings": [l[6:] for l in output.split("\n") if l.strip().startswith("ERROR\t")]}
     else:
         result = _proc.run_r_json(bridge, r_code, timeout=timeout)
         if isinstance(result, dict) and result.get("ok") is False:
@@ -177,7 +177,7 @@ def _load_multi_url(
                 if isinstance(result, dict) and result.get("ok") is False:
                     raise DownloadError(f"数据下载失败: {result.get('error', '')}")
                 return result
-        return {"ok": True, "raw_output": output}
+        return {"ok": True, "raw_output": output, "warnings": [l[6:] for l in output.split("\n") if l.strip().startswith("ERROR\t")]}
     else:
         result = _proc.run_r_json(bridge, r_code, timeout=timeout)
         if isinstance(result, dict) and result.get("ok") is False:
@@ -253,7 +253,7 @@ def load_by_trial_id(
                 if isinstance(result, dict) and result.get("ok") is False:
                     raise DownloadError(f"试验下载失败: {result.get('error', '')}")
                 return result
-        return {"ok": True, "raw_output": output}
+        return {"ok": True, "raw_output": output, "warnings": [l[6:] for l in output.split("\n") if l.strip().startswith("ERROR\t")]}
     else:
         result = _proc.run_r_json(bridge, r_code, timeout=timeout)
         if isinstance(result, dict) and result.get("ok") is False:
@@ -303,7 +303,7 @@ def update_last_query(
                 if isinstance(result, dict) and result.get("ok") is False:
                     raise DownloadError(f"更新失败: {result.get('error', '')}")
                 return result
-        return {"ok": True, "raw_output": output}
+        return {"ok": True, "raw_output": output, "warnings": [l[6:] for l in output.split("\n") if l.strip().startswith("ERROR\t")]}
     else:
         result = _proc.run_r_json(bridge, r_code, timeout=timeout)
         if isinstance(result, dict) and result.get("ok") is False:

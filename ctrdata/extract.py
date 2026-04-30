@@ -208,7 +208,12 @@ def extract_to_dataframe(
 
         # Build SQL with single quotes for string literals, double quotes for
         # identifiers — then embed in an R double-quoted string (no sprintf).
-        where_parts = [f"\"_id\" LIKE '{sid}%'" for sid in scope_ids]
+        # Escape SQL-special characters in scope_ids (defense-in-depth; inputs
+        # are registry IDs with predictable format).
+        def _sql_escape_id(sid: str) -> str:
+            return sid.replace("'", "''").replace("%", "\\%").replace("_", "\\_")
+
+        where_parts = [f"\"_id\" LIKE '{_sql_escape_id(sid)}%'" for sid in scope_ids]
         like_sql = " OR ".join(where_parts)
         sql = (
             f'CREATE TEMP TABLE "{tmp_table}" AS SELECT * FROM '

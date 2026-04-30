@@ -111,7 +111,7 @@ class DownloadService:
             try:
                 result = self.bridge.load_into_db(
                     url=url,
-                    callback=lambda line: _log(f"  {line}") if line and not line.startswith("{") and not line.startswith("ERROR") else None,
+                    callback=lambda line: _log(f"  {line}") if line and not line.startswith("{") else None,
                     skip_parse=True,
                     on_timeout=reg_on_timeout,
                 )
@@ -217,7 +217,7 @@ class DownloadService:
         _log("开始下载...")
         result = self.bridge.load_into_db(
             url=url,
-            callback=lambda line: _log(f"  {line}") if line and not line.startswith("{") and not line.startswith("ERROR") else None,
+            callback=lambda line: _log(f"  {line}") if line and not line.startswith("{") else None,
         )
 
         # Normalize success/failed lists

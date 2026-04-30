@@ -144,16 +144,6 @@ class CdeTab(QWidget):
         page_row.addWidget(self.page_label)
         page_row.addStretch()
 
-        self.prev_btn = QPushButton("上一页")
-        self.prev_btn.setEnabled(False)
-        self.prev_btn.clicked.connect(self._prev_page)
-        page_row.addWidget(self.prev_btn)
-
-        self.next_btn = QPushButton("下一页")
-        self.next_btn.setEnabled(False)
-        self.next_btn.clicked.connect(self._next_page)
-        page_row.addWidget(self.next_btn)
-
         # Scrape all checkbox
         self.scrape_all_checkbox = QCheckBox("爬取全部页")
         self.scrape_all_checkbox.setToolTip("勾选后自动翻页爬取所有记录")
@@ -340,16 +330,6 @@ class CdeTab(QWidget):
         self.page_label.setText(
             f"第 {start}-{end} 条，共 {len(self._all_rows)} 条"
         )
-        self.prev_btn.setEnabled(self._current_page > 1)
-        self.next_btn.setEnabled(
-            self._current_page > 0 and self._current_page < self._total_pages
-        )
-
-    def _prev_page(self):
-        pass  # Not implemented — scrape_all handles pagination
-
-    def _next_page(self):
-        pass  # Not implemented — scrape_all handles pagination
 
     def _do_reset(self):
         self.keyword_input.clear()

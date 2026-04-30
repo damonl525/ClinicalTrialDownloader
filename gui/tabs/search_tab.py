@@ -763,7 +763,7 @@ class SearchTab:
 
                     try:
                         def on_line(line):
-                            if line and not line.startswith("{") and not line.startswith("ERROR"):
+                            if line and not line.startswith("{"):
                                 self._log(f"  {line}")
 
                         result = self.app.bridge.load_into_db(

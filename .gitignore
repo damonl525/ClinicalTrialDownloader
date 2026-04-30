@@ -76,3 +76,6 @@ debug_documents/
 test_documents_direct/
 R-ctrdata/
 docs/
+debug_*.py
+cde_page_source.html
+ctrdata_log_*.txt

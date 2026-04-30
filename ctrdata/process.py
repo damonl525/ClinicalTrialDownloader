@@ -229,6 +229,8 @@ def run_r_streaming(
                 break
             last_activity = time.time()
             stdout_lines.append(line)
+            if line.startswith("ERROR\t"):
+                logger.warning("R subprocess error: %s", line[6:])
             if callback:
                 callback(line)
             if timeout and (time.time() - start) > timeout:
