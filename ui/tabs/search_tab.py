@@ -324,8 +324,9 @@ class SearchTab(QWidget):
         adv_row5.addWidget(self.only_results_check)
         self.protocol_only_check = QCheckBox("仅含Protocol文档的试验")
         self.protocol_only_check.setToolTip(
-            "Protocol: 研究方案;\nSAP: 统计分析计划;\n"
-            "全部: 包含知情同意书等所有文档"
+            "仅含Protocol（研究方案）文档的试验。\n"
+            "CTGOV2/ISRCTN 支持精确预过滤；\n"
+            "CTIS/EUCTR 因无元数据，可选择是否纳入。"
         )
         adv_row5.addWidget(self.protocol_only_check)
         adv_row5.addStretch()
