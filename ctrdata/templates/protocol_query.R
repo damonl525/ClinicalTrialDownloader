@@ -45,17 +45,23 @@ isrctn_result <- tryCatch({
         con = con, fields = c("attachedFiles"), verbose = FALSE
     )
     isrctn_ids <- character(0)
-    if (nrow(df_af) > 0 && "attachedFiles" %in% names(df_af)) {
+    # dbGetFieldsIntoDf flattens nested fields with dot notation
+    af_col <- "attachedFiles.attachedFile"
+    if (nrow(df_af) > 0 && af_col %in% names(df_af)) {
         for (i in seq_len(nrow(df_af))) {
-            af <- df_af$attachedFiles[[i]]
+            af <- df_af[[af_col]][[i]]
             if (is.null(af) || length(af) == 0) next
             names_str <- ""
             if (is.data.frame(af) && "name" %in% names(af)) {
                 names_str <- paste(af$name, collapse = " ")
             } else if (is.list(af)) {
-                for (j in seq_along(af)) {
-                    if (is.list(af[[j]]) && !is.null(af[[j]]$name)) {
-                        names_str <- paste(names_str, af[[j]]$name)
+                if (!is.null(af$name)) {
+                    names_str <- as.character(af$name)
+                } else {
+                    for (j in seq_along(af)) {
+                        if (is.list(af[[j]]) && !is.null(af[[j]]$name)) {
+                            names_str <- paste(names_str, af[[j]]$name)
+                        }
                     }
                 }
             }
