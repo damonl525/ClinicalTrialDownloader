@@ -646,8 +646,8 @@ class DatabaseTab(QWidget):
             self._env_indicator.setStyleSheet("color: #10B981; font-size: 9pt;")
 
     def _recheck_env(self):
-        """Trigger R environment re-check."""
+        """Trigger R environment re-check and always show the dialog."""
         self._env_indicator.setText("● 正在检测...")
         self._env_indicator.setStyleSheet("color: #64748B; font-size: 9pt;")
         if hasattr(self.app, "_check_r_environment"):
-            self.app._check_r_environment()
+            self.app._check_r_environment(show_dialog_always=True)

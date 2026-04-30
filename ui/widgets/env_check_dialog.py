@@ -77,7 +77,7 @@ class EnvCheckDialog(QDialog):
             "<a href='https://cran.r-project.org/'>https://cran.r-project.org/</a></li>"
             "<li>安装完成后，重启本工具</li>"
             "<li>在 R 控制台中安装所需包：<br>"
-            "<code>install.packages(c('ctrdata', 'nodbi', 'RSQLite'))</code></li>"
+            "<code>install.packages(c('ctrdata', 'nodbi', 'RSQLite', 'chromote'))</code></li>"
             "</ol>"
         )
         steps.setOpenExternalLinks(True)
@@ -111,7 +111,7 @@ class EnvCheckDialog(QDialog):
         guide.setWordWrap(True)
         layout.addWidget(guide)
 
-        cmd = 'install.packages(c("ctrdata", "nodbi", "RSQLite"))'
+        cmd = 'install.packages(c("ctrdata", "nodbi", "RSQLite", "chromote"))'
         cmd_edit = QTextEdit()
         cmd_edit.setReadOnly(True)
         cmd_edit.setMaximumHeight(60)

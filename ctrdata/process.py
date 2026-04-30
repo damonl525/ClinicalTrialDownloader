@@ -274,6 +274,12 @@ def run_r_streaming(
 # Single trial document download
 # ============================================================
 
+def _is_isrctn_trial(trial_id: str) -> bool:
+    """Check if a trial ID belongs to ISRCTN registry."""
+    import re as _re
+    return trial_id.startswith("ISRCTN") or _re.match(r"^\d{8}$", trial_id)
+
+
 def download_one_trial_doc(
     bridge,
     trial_id: str,
@@ -281,7 +287,18 @@ def download_one_trial_doc(
     documents_regexp: str,
     timeout: int,
 ) -> dict:
-    """Download documents for a single trial in a separate R process."""
+    """Download documents for a single trial.
+
+    ISRCTN trials use direct HTTP download via ISRCTN XML API.
+    All other registries use the R ctrdata subprocess.
+    """
+    if _is_isrctn_trial(trial_id):
+        from ctrdata.isrctn_download import download_isrctn_trial_docs
+        return download_isrctn_trial_docs(
+            trial_id, documents_path, documents_regexp, timeout=timeout
+        )
+
+    # R-based download for CTGOV2 / EUCTR / CTIS
     db = _r_escape(bridge.db_path)
     col = _r_escape(bridge.collection)
     dp = _r_escape(documents_path)

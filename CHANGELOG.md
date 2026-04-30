@@ -10,6 +10,7 @@
 - **下载跳过已有文件**：提取页文档下载、FDA 审评文档下载、CDE 审评文档下载三个模块，遇到目标目录已有同名文件时自动跳过，日志逐条记录，最终统计展示跳过数量
 - **Protocol 多注册中心预过滤**：Protocol 文档过滤扩展支持 ISRCTN（通过 `attachedFiles` 文件名匹配），不再仅限于 CTGOV2；新增 `classify_registry()` 辅助函数按 ID 格式识别注册中心
 - **Protocol 过滤范围选择对话框**：勾选 Protocol 过滤后弹窗让用户选择「仅 CTGOV2 + ISRCTN（推荐）」或「全部注册中心（含 CTIS/EUCTR）」，CTIS/EUCTR 因无文档元数据将纳入全部记录；搜索后自动提取和手动提取均会弹窗确认，用户取消时有日志反馈
+- **ISRCTN 直接文档下载**：ISRCTN 文档下载绕过 R ctrdata 的 chromote 依赖，通过 ISRCTN 公开 XML API (`/api/trial/{id}/format/default`) 获取文件下载 URL，Python urllib 直接下载。不再需要安装 R chromote 包，解决了 ctrdata 对部分 ISRCTN 试验报告"No documents identified"的问题
 
 ### 改进
 - **R 子进程错误日志增强**：R streaming 输出 `ERROR\t` 行时记录 `logger.warning()`，不再静默丢弃，便于诊断下载失败
@@ -18,9 +19,13 @@
 - **全选仅操作可见行**：表格全选/取消全选仅操作当前筛选后的可见行，隐藏行保持原状
 - **Protocol 查询日志改进**：日志分别显示 CTGOV2 和 ISRCTN 的 Protocol 匹配数量，便于诊断
 - **Protocol 查询错误隔离**：CTGOV2 和 ISRCTN 的 R 查询使用独立 tryCatch，单个注册中心查询失败不影响另一个
+- **提取后过滤诊断日志**：每个 post-extraction 过滤器（阶段/状态/日期/适应症/干预措施）记录行数变化，便于定位行数骤减原因
+- **chromote R 包检测**：环境检测页新增 chromote 包版本显示；安装提示包含 chromote
 
 ### 修复
 - **Protocol 预过滤遗漏非 CTGOV2 记录**：搜索 4508 条跨 4 个注册中心的试验，Protocol 过滤仅返回 63 条 CTGOV2 记录，ISRCTN 的 Protocol 记录完全丢失。根因：`protocol_query.R` 仅查询 CTGOV2 独有的 `hasProtocol` 字段
+- **ISRCTN Protocol 查询列名错误**：`dbGetFieldsIntoDf` 返回列名 `"attachedFiles.attachedFile"` 而非 `"attachedFiles"`，导致 ISRCTN 文件检测始终为 0
+- **ISRCTN 文档下载失败**：ctrdata 对部分 ISRCTN 试验报告"No documents identified"，但 ISRCTN 网站实际有 Protocol 文件。改用 Python 直接下载绕过此问题
 - **全库模式 Protocol 过滤缺少 EUCTR/CTIS**：全库模式下选择「全部注册中心」时，使用 `get_all_trial_ids()` 获取所有 ID（非去重），确保 EUCTR/CTIS 记录被正确纳入
 - **缺失 jinja2 依赖**：`requirements.txt` 未列出 `jinja2`，全新环境 `pip install -r requirements.txt` 后 import 直接崩溃
 - **仓库清理**：删除根目录 debug 脚本和临时日志文件，`.gitignore` 增加规则防止再次提交

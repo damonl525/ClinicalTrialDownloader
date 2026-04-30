@@ -45,7 +45,7 @@ class MainWindow(QMainWindow):
     """Application main window with 3-tab layout."""
 
     # Signal: thread-safe env check result → main thread dialog
-    _env_check_complete = Signal(dict)
+    _env_check_complete = Signal(dict, bool)
 
     def __init__(self, bridge=None):
         super().__init__()
@@ -285,15 +285,17 @@ class MainWindow(QMainWindow):
 
     # ── R environment check ──
 
-    def _check_r_environment(self):
+    def _check_r_environment(self, show_dialog_always=False):
+        force_dialog = show_dialog_always
+
         def _worker():
             from ctrdata_core import check_r_environment
             info = check_r_environment()
-            self._env_check_complete.emit(info)
+            self._env_check_complete.emit(info, force_dialog)
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_env_check_complete(self, info: dict):
+    def _on_env_check_complete(self, info: dict, show_dialog_always=False):
         """Handle env check result on main thread — update status and show dialog if needed."""
         self.env_info = info
 
@@ -308,6 +310,8 @@ class MainWindow(QMainWindow):
                 self._status_msg(f"{ver} + ctrdata {pkg} 就绪", "ok")
             except Exception as e:
                 self._status_msg(f"R 初始化失败: {e}", "error")
+                self._show_env_dialog(info)
+            if show_dialog_always:
                 self._show_env_dialog(info)
         elif info.get("r_available"):
             self._status_msg(f"R 包不完整: {info.get('error', '')}", "warn")
