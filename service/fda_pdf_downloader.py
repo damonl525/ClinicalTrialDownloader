@@ -91,7 +91,7 @@ class FdaPdfDownloader(QObject):
 
         self._queue = list(docs)
         self._save_dir = save_dir
-        self._results = {"success": [], "failed": []}
+        self._results = {"success": [], "failed": [], "skipped": []}
         self._total = len(docs)
         self._current_idx = 0
         self._current_retry = 0
@@ -147,8 +147,16 @@ class FdaPdfDownloader(QObject):
             doc_type=doc.get("doc_type", ""),
         )
 
-        # Handle name collision
         filepath = os.path.join(self._save_dir, self._current_filename)
+
+        # Skip if file already exists on disk
+        if os.path.exists(filepath):
+            logger.info("文件已存在，跳过: %s", self._current_filename)
+            self._results["skipped"].append(filepath)
+            self._advance()
+            return
+
+        # Handle name collision (different doc generates same filename)
         if os.path.exists(filepath):
             base, ext = os.path.splitext(filepath)
             n = 2
@@ -156,13 +164,6 @@ class FdaPdfDownloader(QObject):
                 n += 1
             filepath = f"{base}({n}){ext}"
             self._current_filename = os.path.basename(filepath)
-
-        # Skip if file already downloaded (final name check)
-        if os.path.exists(filepath):
-            logger.info("文件已存在，跳过: %s", self._current_filename)
-            self._results["success"].append(filepath)
-            self._advance()
-            return
 
         # Clean up previous page
         if self._page:
@@ -294,9 +295,10 @@ class FdaPdfDownloader(QObject):
             pass
 
         success_count = len(self._results["success"])
+        skipped_count = len(self._results["skipped"])
         failed_count = len(self._results["failed"])
         logger.info(
-            "FDA文档下载完成: %d 成功, %d 失败",
-            success_count, failed_count,
+            "FDA文档下载完成: %d 成功, %d 跳过, %d 失败",
+            success_count, skipped_count, failed_count,
         )
         self.download_complete.emit(self._results)
