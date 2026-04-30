@@ -382,6 +382,7 @@ def download_documents_batch(
         "success": success,
         "failed": failed,
         "skipped": {},
+        "skipped_existing": list(already_done),
         "total": len(trial_ids),
     }
 

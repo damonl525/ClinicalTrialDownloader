@@ -51,9 +51,11 @@ class DocResultDialog(QMessageBox):
         if isinstance(success, str): success = [success]
         failed = result.get("failed", {})
         skipped = result.get("skipped", {})
+        skipped_existing = result.get("skipped_existing", [])
         fail_count = len(failed) if isinstance(failed, dict) else 0
         skip_count = len(skipped) if isinstance(skipped, dict) else 0
-        total = len(success) + skip_count + fail_count
+        skip_exist_count = len(skipped_existing)
+        total = result.get("total", len(success) + skip_count + fail_count + skip_exist_count)
 
         if not success and fail_count > 0:
             self.setIcon(QMessageBox.Critical)
@@ -63,9 +65,11 @@ class DocResultDialog(QMessageBox):
             self.setIcon(QMessageBox.Information)
 
         # Summary
-        summary_parts = [f"处理试验: {total} 个", f"成功下载: {len(success)} 个"]
+        summary_parts = [f"总计: {total} 个试验", f"本次下载: {len(success)} 个"]
+        if skip_exist_count:
+            summary_parts.append(f"已存在跳过: {skip_exist_count} 个")
         if skip_count:
-            summary_parts.append(f"跳过: {skip_count} 个")
+            summary_parts.append(f"超时跳过: {skip_count} 个")
         if fail_count:
             summary_parts.append(f"失败: {fail_count} 个")
         self.setText("本次下载:\n  " + "\n  ".join(summary_parts))
@@ -82,13 +86,22 @@ class DocResultDialog(QMessageBox):
                 lines.append(f"  ... 及其他 {len(success) - 50} 个")
             details.append("\n".join(lines))
 
-        # Skipped
+        # Skipped (timeout)
         if isinstance(skipped, dict) and skipped:
-            lines = ["以下试验文档已存在，跳过下载:"]
+            lines = ["以下试验超时跳过:"]
             for tid, reason in list(skipped.items())[:50]:
                 lines.append(f"  {tid}: {reason}")
             if len(skipped) > 50:
                 lines.append(f"  ... 及其他 {len(skipped) - 50} 个")
+            details.append("\n".join(lines))
+
+        # Skipped (already existing)
+        if skipped_existing:
+            lines = [f"以下试验文档已存在，跳过下载 ({skip_exist_count} 个):"]
+            for tid in skipped_existing[:50]:
+                lines.append(f"  {tid}")
+            if len(skipped_existing) > 50:
+                lines.append(f"  ... 及其他 {len(skipped_existing) - 50} 个")
             details.append("\n".join(lines))
 
         # Failed

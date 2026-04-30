@@ -106,7 +106,7 @@ class ExtractService:
             documents_path=documents_path,
             documents_regexp=documents_regexp,
             per_trial_timeout=per_trial_timeout,
-            callback=on_progress or (lambda c, t, tid, s, err=None: None),
+            callback=on_progress or (lambda c, t, tid, s, detail="": None),
         )
         return result
 

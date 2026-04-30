@@ -182,15 +182,6 @@ class CdePdfDownloader(QObject):
             self._advance()
             return
 
-        # Handle name collision (different doc generates same filename)
-        if os.path.exists(filepath):
-            base, ext = os.path.splitext(filepath)
-            n = 2
-            while os.path.exists(f"{base}({n}){ext}"):
-                n += 1
-            filepath = f"{base}({n}){ext}"
-            self._current_filename = os.path.basename(filepath)
-
         # Reset timeout timer
         if self._timeout_timer:
             self._timeout_timer.stop()
