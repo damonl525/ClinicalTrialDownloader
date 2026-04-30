@@ -63,14 +63,16 @@ def get_protocol_trial_ids(bridge, scope_ids: Optional[List[str]] = None) -> Lis
             if any(str(tid).startswith(str(sid)) for sid in scope_set)
         ]
         logger.info(
-            f"Protocol query: {result.get('total', '?')} records, "
-            f"{len(all_protocol_ids)} with Protocol, {len(filtered)} in scope"
+            f"Protocol query: CTGOV2 {result.get('ctgov_count', '?')} + "
+            f"ISRCTN {result.get('isrctn_count', '?')} with Protocol, "
+            f"{len(filtered)} in scope"
         )
         return filtered
 
     logger.info(
-        f"Protocol query: {result.get('total', '?')} records, "
-        f"{len(all_protocol_ids)} with Protocol docs"
+        f"Protocol query: CTGOV2 {result.get('ctgov_count', '?')} + "
+        f"ISRCTN {result.get('isrctn_count', '?')} with Protocol docs, "
+        f"{len(all_protocol_ids)} total"
     )
     return all_protocol_ids
 
@@ -382,4 +384,27 @@ def get_unique_ids(bridge) -> List[str]:
         return []
     except Exception as e:
         logger.warning(f"去重失败: {e}")
+        return []
+
+
+def get_all_trial_ids(bridge) -> List[str]:
+    """Return ALL _id values from the database (no dedup)."""
+    if not bridge.db_path:
+        return []
+
+    db = _proc._r_escape(bridge.db_path)
+    col = _proc._r_escape(bridge.collection)
+
+    r_code = _render("all_trial_ids", db=db, col=col)
+
+    try:
+        result = _proc.run_r_json(bridge, r_code, timeout=60)
+        if isinstance(result, dict) and result.get("ok"):
+            ids = result.get("ids", [])
+            if isinstance(ids, str):
+                ids = [ids]
+            return ids
+        return []
+    except Exception as e:
+        logger.warning(f"All trial IDs query failed: {e}")
         return []
