@@ -41,10 +41,12 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 
 ### Document Download
 - PDF downloads (protocols, SAPs, statistical analysis, etc.)
-- Batch download in single R session (eliminates per-trial cold-start overhead)
+- ISRCTN: direct HTTP download via ISRCTN XML API (no R/chromote dependency)
+- Other registries: per-trial R subprocess with timeout isolation
 - Resume/checkpoint support with UI prompt on interrupted downloads
 - Configurable per-trial timeout via Settings
 - Document type filtering (protocol, SAP, or all)
+- Protocol pre-filter: cross-registry (CTGOV2 + ISRCTN) metadata-based filtering
 
 ### FDA Review Documents
 - Standalone FDA tab — independent of trial data, no database or R environment required
@@ -80,7 +82,7 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 
 ### R
 - R 4.0+
-- Packages: `ctrdata`, `nodbi`, `RSQLite`
+- Packages: `ctrdata`, `nodbi`, `RSQLite`, `chromote`
 
 ### OS
 - Windows (primary)
@@ -95,7 +97,7 @@ pip install -r requirements.txt
 
 ```r
 # Install R packages (in R console)
-install.packages(c("ctrdata", "nodbi", "RSQLite"))
+install.packages(c("ctrdata", "nodbi", "RSQLite", "chromote"))
 ```
 
 ## Quick Start
@@ -134,6 +136,7 @@ ui/
 ctrdata/
   bridge.py                      # CtrdataBridge -- Python-to-R facade
   process.py                     # R subprocess management (streaming + cancel)
+  isrctn_download.py             # ISRCTN direct document download (XML API)
   search_query.py                # Query generation & URL parsing
   search_download.py             # Data download (single/multi URL)
   extract.py                     # Field extraction -> DataFrame
