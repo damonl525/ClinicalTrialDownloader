@@ -565,21 +565,33 @@ class CdeTab(QWidget):
 
         success = results.get("success", [])
         failed = results.get("failed", [])
+        skipped = results.get("skipped", [])
+        skip_count = len(skipped)
 
         self.download_progress.finish(success=len(success), failed=len(failed))
 
         if not failed:
-            self.result_label.setText(f"下载完成: {len(success)} 个文件已保存")
+            parts = [f"{len(success)} 个文件已保存"]
+            if skip_count:
+                parts.append(f"{skip_count} 个已存在跳过")
+            self.result_label.setText(f"下载完成: {', '.join(parts)}")
             self.app.status.showMessage(f"已下载 {len(success)} 个 CDE 审评文档")
         else:
-            self.result_label.setText(f"下载完成: {len(success)} 成功, {len(failed)} 失败")
+            parts = [f"成功: {len(success)} 个"]
+            if skip_count:
+                parts.append(f"跳过: {skip_count} 个")
+            parts.append(f"失败: {len(failed)} 个")
+            self.result_label.setText(f"下载完成: {', '.join(parts)}")
             errors = "\n".join(
-                f"• {f.get('filename', '未知')}: {f.get('error', '未知错误')}"
+                f"- {f.get('filename', '未知')}: {f.get('error', '未知错误')}"
                 for f in failed[:10]
             )
+            skip_line = f"\n跳过: {skip_count} 个" if skip_count else ""
             QMessageBox.warning(
                 self, "部分下载失败",
-                f"成功: {len(success)} 个\n失败: {len(failed)} 个\n\n失败详情:\n{errors}",
+                f"成功: {len(success)} 个\n"
+                f"失败: {len(failed)} 个{skip_line}\n\n"
+                f"失败详情:\n{errors}",
             )
 
     # ─────────────────────────────────────────────────────────────
