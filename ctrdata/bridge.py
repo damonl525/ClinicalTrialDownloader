@@ -289,6 +289,10 @@ class CtrdataBridge:
         """通过轻量 R 查询获取有 Protocol 文档的试验 ID"""
         return _extract.get_protocol_trial_ids(self, scope_ids)
 
+    def get_all_trial_ids(self) -> List[str]:
+        """Return ALL _id values from the database (no dedup)."""
+        return _extract.get_all_trial_ids(self)
+
     # ============================================================
     # 7. Active substance synonyms
     # ============================================================
