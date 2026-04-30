@@ -1,12 +1,16 @@
 con <- nodbi::src_sqlite(dbname="{{ db }}", collection="{{ col }}")
-result <- tryCatch({
+
+n_total <- 0L
+
+# --- CTGOV2: hasProtocol check (existing logic) ---
+ctgov_result <- tryCatch({
     df <- ctrdata::dbGetFieldsIntoDf(
         con = con,
         fields = c("documentSection.largeDocumentModule.largeDocs.hasProtocol"),
         verbose = FALSE
     )
+    n_total <<- nrow(df)
     protocol_ids <- character(0)
-    n_total <- nrow(df)
     if (n_total > 0) {
         hp_col <- "documentSection.largeDocumentModule.largeDocs.hasProtocol"
         if (hp_col %in% names(df)) {
@@ -30,9 +34,49 @@ result <- tryCatch({
             }
         }
     }
-    list(ok = TRUE, ids = as.list(protocol_ids), total = n_total)
+    list(ids = protocol_ids, count = length(protocol_ids))
 }, error = function(e) {
-    list(ok = FALSE, error = as.character(e$message), ids = list(), total = 0L)
+    list(ids = character(0), count = 0L)
 })
+
+# --- ISRCTN: check attachedFiles filenames (isolated) ---
+isrctn_result <- tryCatch({
+    df_af <- ctrdata::dbGetFieldsIntoDf(
+        con = con, fields = c("attachedFiles"), verbose = FALSE
+    )
+    isrctn_ids <- character(0)
+    if (nrow(df_af) > 0 && "attachedFiles" %in% names(df_af)) {
+        for (i in seq_len(nrow(df_af))) {
+            af <- df_af$attachedFiles[[i]]
+            if (is.null(af) || length(af) == 0) next
+            names_str <- ""
+            if (is.data.frame(af) && "name" %in% names(af)) {
+                names_str <- paste(af$name, collapse = " ")
+            } else if (is.list(af)) {
+                for (j in seq_along(af)) {
+                    if (is.list(af[[j]]) && !is.null(af[[j]]$name)) {
+                        names_str <- paste(names_str, af[[j]]$name)
+                    }
+                }
+            }
+            if (grepl("\\bprotocol\\b|\\bprot\\b", names_str, ignore.case = TRUE)) {
+                isrctn_ids <- c(isrctn_ids, as.character(df_af$`_id`[i]))
+            }
+        }
+    }
+    list(ids = isrctn_ids, count = length(isrctn_ids))
+}, error = function(e) {
+    list(ids = character(0), count = 0L)
+})
+
+# --- Combine results (deduplicated) ---
+all_ids <- unique(c(ctgov_result$ids, isrctn_result$ids))
+result <- list(
+    ok = TRUE,
+    ids = as.list(all_ids),
+    total = n_total,
+    ctgov_count = ctgov_result$count,
+    isrctn_count = isrctn_result$count
+)
 tryCatch(DBI::dbDisconnect(con$con), error = function(e) {})
 cat(jsonlite::toJSON(result, auto_unbox = TRUE))
