@@ -121,7 +121,7 @@ class ExportTab(QWidget):
     # Thread-safe signals
     _extract_complete = Signal(object)  # DataFrame
     _extract_error = Signal(str)
-    _doc_progress = Signal(int, int, str, str)  # current, total, trial_id, status
+    _doc_progress = Signal(int, int, str, str, str)  # current, total, trial_id, status, detail
     _doc_complete = Signal(dict)
     _doc_error = Signal(str)
     _fields_loaded = Signal(list)   # loaded field names from background thread
@@ -914,8 +914,8 @@ class ExportTab(QWidget):
                     documents_path=docs_path,
                     documents_regexp=doc_regexp,
                     per_trial_timeout=per_trial_timeout,
-                    on_progress=lambda c, t, tid, s, err=None:
-                        self._doc_progress.emit(c, t, tid, s),
+                    on_progress=lambda c, t, tid, s, detail="":
+                        self._doc_progress.emit(c, t, tid, s, detail),
                 )
                 self._doc_complete.emit(result)
             except Exception as e:
@@ -923,7 +923,7 @@ class ExportTab(QWidget):
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_doc_progress(self, current, total, trial_id, status):
+    def _on_doc_progress(self, current, total, trial_id, status, detail=""):
         self.doc_progress.update_progress(current, total, f"正在下载 {trial_id} ({current}/{total})")
         if status == "start":
             self.doc_progress.update_detail(f"{current}/{total} 试验")
@@ -946,6 +946,8 @@ class ExportTab(QWidget):
                 remaining = elapsed / current * (total - current)
                 self.doc_progress.update_eta(elapsed, remaining)
             logger.info(f"文档下载 [{current}/{total}]: {trial_id} 跳过")
+        elif status == "file_skip":
+            logger.info(f"文档下载 [{current}/{total}]: {trial_id} 跳过 {detail} 个已存在文件")
 
     def _on_doc_complete(self, result):
         try:
