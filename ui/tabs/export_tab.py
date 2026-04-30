@@ -550,7 +550,7 @@ class ExportTab(QWidget):
             return "all_registries"
         return None
 
-    def _extract(self, scope_choice: str | None = None):
+    def _extract(self):
         if self._is_extracting:
             return
         if not self.app.bridge or not self.app.bridge.db_path:
@@ -592,9 +592,10 @@ class ExportTab(QWidget):
         scope_ids = self._get_scope_ids()
 
         # GUI thread: ask user for Protocol scope before starting worker
-        if protocol_filter and scope_choice is None:
+        if protocol_filter:
             scope_choice = self._ask_protocol_scope_dialog()
             if scope_choice is None:
+                self._log("Protocol 过滤已取消，跳过提取")
                 return  # user cancelled
 
         self._is_extracting = True
@@ -692,7 +693,7 @@ class ExportTab(QWidget):
             self.protocol_only_check.setChecked(True)
             self._filter_card.header.setChecked(True)
         # Trigger extract with current settings
-        self._extract(scope_choice="ctgov_isrctn_only")
+        self._extract()
 
     def _on_extract_complete(self, df):
         # If extraction was cancelled, UI is already reset by _cancel_extract
