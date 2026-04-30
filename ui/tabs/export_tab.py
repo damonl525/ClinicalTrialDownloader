@@ -960,17 +960,24 @@ class ExportTab(QWidget):
         if isinstance(success, str): success = [success]
         failed = result.get("failed", {})
         skipped = result.get("skipped", {})
+        skipped_existing = result.get("skipped_existing", [])
         fail_count = len(failed) if isinstance(failed, dict) else 0
         skip_count = len(skipped) if isinstance(skipped, dict) else 0
+        skip_exist_count = len(skipped_existing)
 
-        self.doc_progress.finish(success=len(success), skipped=skip_count, failed=fail_count)
+        self.doc_progress.finish(success=len(success), skipped=skip_count + skip_exist_count, failed=fail_count)
 
-        self._log(
-            f"文档下载完成: 成功 {len(success)}, 跳过 {skip_count}, 失败 {fail_count}"
-        )
-        self.doc_status.setText(
-            f"完成: 成功 {len(success)}, 跳过 {skip_count}, 失败 {fail_count}"
-        )
+        parts = [f"成功 {len(success)}"]
+        if skip_exist_count:
+            parts.append(f"已存在跳过 {skip_exist_count}")
+        if skip_count:
+            parts.append(f"超时跳过 {skip_count}")
+        if fail_count:
+            parts.append(f"失败 {fail_count}")
+
+        summary = ", ".join(parts)
+        self._log(f"文档下载完成: {summary}")
+        self.doc_status.setText(f"完成: {summary}")
 
         dlg = DocResultDialog(result, self)
         dlg.exec()

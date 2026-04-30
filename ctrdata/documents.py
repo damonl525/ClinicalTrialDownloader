@@ -205,17 +205,20 @@ def download_documents_for_ids(
     remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
 
     if not remaining:
+        _cleanup_resume(bridge, resume_file)
         return {
             "ok": True,
-            "success": [tid for tid in already_done if tid in set(str(t) for t in trial_ids)],
+            "success": [],
             "failed": {},
             "skipped": {},
+            "skipped_existing": list(already_done),
             "total": len(trial_ids),
         }
 
     total_to_process = len(remaining)
-    runtime_completed = list(already_done)
-    runtime_failed = dict(resume_data.get("failed", {}))
+    runtime_completed = []
+    runtime_failed = {}
+    resume_completed = list(already_done)  # For checkpoint only
     runtime_skipped_explicit = list(resume_data.get("skipped_explicitly", []))
     runtime_in_progress = set(in_progress_set & set(remaining))
 
@@ -223,7 +226,7 @@ def download_documents_for_ids(
         _save_resume(
             bridge,
             resume_file,
-            runtime_completed,
+            resume_completed + runtime_completed,
             runtime_failed,
             len(trial_ids),
             skipped_explicitly=runtime_skipped_explicit,
@@ -285,6 +288,7 @@ def download_documents_for_ids(
         "success": list(runtime_completed),
         "failed": failed,
         "skipped": skipped,
+        "skipped_existing": list(already_done),
         "total": len(trial_ids),
     }
 
