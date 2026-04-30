@@ -592,6 +592,7 @@ class ExportTab(QWidget):
         scope_ids = self._get_scope_ids()
 
         # GUI thread: ask user for Protocol scope before starting worker
+        scope_choice = None
         if protocol_filter:
             scope_choice = self._ask_protocol_scope_dialog()
             if scope_choice is None:
