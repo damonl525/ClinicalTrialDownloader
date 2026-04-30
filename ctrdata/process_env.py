@@ -160,7 +160,8 @@ def check_r_environment() -> dict:
         r_version = R.version.string,
         ctrdata = "",
         nodbi = "",
-        RSQLite = ""
+        RSQLite = "",
+        chromote = ""
     )
     tryCatch({
         result$ctrdata <- as.character(packageVersion("ctrdata"))
@@ -170,6 +171,9 @@ def check_r_environment() -> dict:
     }, error = function(e) {})
     tryCatch({
         result$RSQLite <- as.character(packageVersion("RSQLite"))
+    }, error = function(e) {})
+    tryCatch({
+        result$chromote <- as.character(packageVersion("chromote"))
     }, error = function(e) {})
     cat(toJSON(result, auto_unbox=TRUE))
     """
@@ -236,7 +240,7 @@ def check_r_environment() -> dict:
         except (ValueError, AttributeError):
             pass
 
-    install_hint = '请运行: install.packages(c("ctrdata", "nodbi", "RSQLite"))'
+    install_hint = '请运行: install.packages(c("ctrdata", "nodbi", "RSQLite", "chromote"))'
     error_msg = (error_parts[0] + "。" + install_hint) if len(error_parts) == 1 else (
         "；".join(error_parts) + "。" + install_hint
     ) if error_parts else ""
@@ -249,6 +253,7 @@ def check_r_environment() -> dict:
             "ctrdata": info.get("ctrdata", ""),
             "nodbi": info.get("nodbi", ""),
             "RSQLite": info.get("RSQLite", ""),
+            "chromote": info.get("chromote", ""),
         },
         "error": error_msg,
     }
