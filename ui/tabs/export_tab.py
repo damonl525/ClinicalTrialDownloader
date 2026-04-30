@@ -550,7 +550,7 @@ class ExportTab(QWidget):
             return "all_registries"
         return None
 
-    def _extract(self):
+    def _extract(self, scope_choice: str | None = None):
         if self._is_extracting:
             return
         if not self.app.bridge or not self.app.bridge.db_path:
@@ -592,8 +592,7 @@ class ExportTab(QWidget):
         scope_ids = self._get_scope_ids()
 
         # GUI thread: ask user for Protocol scope before starting worker
-        scope_choice = None
-        if protocol_filter:
+        if protocol_filter and scope_choice is None:
             scope_choice = self._ask_protocol_scope_dialog()
             if scope_choice is None:
                 return  # user cancelled
@@ -616,10 +615,8 @@ class ExportTab(QWidget):
                     if scope_ids is not None:
                         # Scoped mode: scope_ids is the boundary
                         if scope_choice == "ctgov_isrctn_only":
-                            effective_scope = [
-                                tid for tid in protocol_ids
-                                if classify_registry(tid) in ("CTGOV2", "ISRCTN")
-                            ]
+                            # protocol_ids already only contains CTGOV2/ISRCTN
+                            effective_scope = protocol_ids
                         else:  # "all_registries"
                             euctr_ctis_ids = [
                                 sid for sid in scope_ids
@@ -632,6 +629,8 @@ class ExportTab(QWidget):
                             effective_scope = protocol_ids
                         else:  # "all_registries"
                             all_db_ids = self.app.bridge.get_all_trial_ids()
+                            if not all_db_ids:
+                                self._log_signal.emit("warning", "获取全部试验ID失败，仅使用Protocol查询结果")
                             euctr_ctis_ids = [
                                 tid for tid in all_db_ids
                                 if classify_registry(tid) == "EUCTR_CTIS"
@@ -693,7 +692,7 @@ class ExportTab(QWidget):
             self.protocol_only_check.setChecked(True)
             self._filter_card.header.setChecked(True)
         # Trigger extract with current settings
-        self._extract()
+        self._extract(scope_choice="ctgov_isrctn_only")
 
     def _on_extract_complete(self, df):
         # If extraction was cancelled, UI is already reset by _cancel_extract
