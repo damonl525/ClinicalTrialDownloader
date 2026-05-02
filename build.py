@@ -112,6 +112,7 @@ a = Analysis(
     ],
     hiddenimports=[
         'PySide6.QtWidgets', 'PySide6.QtCore', 'PySide6.QtGui',
+        'PySide6.QtWebEngineCore',
         'pandas', 'qtawesome', 'pyqtdarktheme', 'darkdetect',
         'jinja2',
     ],

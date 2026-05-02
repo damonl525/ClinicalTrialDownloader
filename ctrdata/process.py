@@ -280,6 +280,31 @@ def _is_isrctn_trial(trial_id: str) -> bool:
     return trial_id.startswith("ISRCTN") or _re.match(r"^\d{8}$", trial_id)
 
 
+def _is_euctr_trial(trial_id: str) -> bool:
+    """Check if a trial ID belongs to EUCTR registry."""
+    from core.constants import classify_registry
+    return classify_registry(trial_id) == "EUCTR"
+
+
+def _is_ctis_trial(trial_id: str) -> bool:
+    """Check if a trial ID belongs to CTIS registry."""
+    from core.constants import classify_registry
+    return classify_registry(trial_id) == "CTIS"
+
+
+def _euctr_id_to_query(trial_id: str) -> str:
+    """Convert EUCTR _id to ctrdata queryterm format.
+
+    EUCTR _id: "2004-000356-17-3RD"  (with country suffix)
+    queryterm: "query=2004-000356-17" (EudraCT number, no country)
+    """
+    parts = trial_id.split("-")
+    if len(parts) >= 3:
+        eudract = "-".join(parts[:3])
+        return f"query={eudract}"
+    return f"query={trial_id}"
+
+
 def download_one_trial_doc(
     bridge,
     trial_id: str,
@@ -290,7 +315,8 @@ def download_one_trial_doc(
     """Download documents for a single trial.
 
     ISRCTN trials use direct HTTP download via ISRCTN XML API.
-    All other registries use the R ctrdata subprocess.
+    EUCTR trials use ctrdata with euctrresults=TRUE (no documents.regexp).
+    CTGOV2 / CTIS use standard ctrdata with documents.regexp.
     """
     if _is_isrctn_trial(trial_id):
         from ctrdata.isrctn_download import download_isrctn_trial_docs
@@ -298,7 +324,17 @@ def download_one_trial_doc(
             trial_id, documents_path, documents_regexp, timeout=timeout
         )
 
-    # R-based download for CTGOV2 / EUCTR / CTIS
+    if _is_euctr_trial(trial_id):
+        return _download_euctr_trial_doc(
+            bridge, trial_id, documents_path, timeout,
+        )
+
+    if _is_ctis_trial(trial_id):
+        return _download_ctis_trial_doc(
+            bridge, trial_id, documents_path, documents_regexp, timeout,
+        )
+
+    # R-based download for CTGOV2
     db = _r_escape(bridge.db_path)
     col = _r_escape(bridge.collection)
     dp = _r_escape(documents_path)
@@ -310,6 +346,103 @@ def download_one_trial_doc(
 
     r_code = _render(
         "download_one_trial_doc",
+        db=db,
+        col=col,
+        safe_id=safe_id,
+        dp=dp,
+        doc_re=doc_re,
+    )
+
+    proc = run_r_streaming(
+        bridge,
+        r_code,
+        timeout=timeout + 30,
+        stall_timeout=timeout,
+    )
+
+    import json as _json
+
+    output = proc.stdout.strip()
+    for line in reversed(output.split("\n")):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return _json.loads(line)
+            except _json.JSONDecodeError:
+                pass
+            break
+
+    return {"ok": False, "n": 0, "error": "No output from R"}
+
+
+def _download_euctr_trial_doc(
+    bridge,
+    trial_id: str,
+    documents_path: str,
+    timeout: int,
+) -> dict:
+    """Download EUCTR documents using euctrresults=TRUE.
+
+    EUCTR downloads ALL documents (documents.regexp is not supported).
+    queryterm must be "query={eudract_number}" format (no country suffix).
+    """
+    db = _r_escape(bridge.db_path)
+    col = _r_escape(bridge.collection)
+    dp = _r_escape(documents_path)
+    queryterm = _r_escape(_euctr_id_to_query(trial_id))
+
+    r_code = _render(
+        "download_euctr_trial_doc",
+        db=db,
+        col=col,
+        queryterm=queryterm,
+        dp=dp,
+    )
+
+    proc = run_r_streaming(
+        bridge,
+        r_code,
+        timeout=timeout + 30,
+        stall_timeout=timeout,
+    )
+
+    import json as _json
+
+    output = proc.stdout.strip()
+    for line in reversed(output.split("\n")):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                return _json.loads(line)
+            except _json.JSONDecodeError:
+                pass
+            break
+
+    return {"ok": False, "n": 0, "error": "No output from R"}
+
+
+def _download_ctis_trial_doc(
+    bridge,
+    trial_id: str,
+    documents_path: str,
+    documents_regexp: str,
+    timeout: int,
+) -> dict:
+    """Download CTIS documents with register="CTIS" specified.
+
+    CTIS trial ID is passed directly; documents.regexp is supported.
+    """
+    db = _r_escape(bridge.db_path)
+    col = _r_escape(bridge.collection)
+    dp = _r_escape(documents_path)
+    doc_re = (
+        f', documents.regexp = "{_r_escape(documents_regexp)}"'
+        if documents_regexp else ""
+    )
+    safe_id = _r_escape(trial_id)
+
+    r_code = _render(
+        "download_ctis_trial_doc",
         db=db,
         col=col,
         safe_id=safe_id,

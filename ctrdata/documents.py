@@ -236,6 +236,11 @@ def download_documents_for_ids(
         )
 
     for i, tid in enumerate(remaining, 1):
+        # Check cancel flag between trials
+        if bridge._cancelled:
+            logger.info(f"Download cancelled after {i-1}/{total_to_process} trials")
+            break
+
         if callback:
             callback(i, total_to_process, tid, "start", None)
 

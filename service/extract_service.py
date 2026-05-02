@@ -12,6 +12,8 @@ from typing import Callable, List, Optional
 
 import pandas as pd
 
+from core.constants import classify_registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,11 +75,17 @@ class ExtractService:
             scope_ids=scope_ids,
         )
 
-        # Register filtering by _id prefix
+        # Register filtering — use vectorized startswith for CTGOV2/ISRCTN,
+        # classify_registry for EUCTR/CTIS (no simple prefix distinguishable)
         if filter_register and "_id" in df.columns:
-            prefix = _register_prefix(filter_register)
             before = len(df)
-            df = df[df["_id"].astype(str).str.startswith(prefix)]
+            id_col = df["_id"].astype(str)
+            if filter_register == "CTGOV2":
+                df = df[id_col.str.startswith("NCT")]
+            elif filter_register == "ISRCTN":
+                df = df[id_col.str.startswith("ISRCTN")]
+            else:
+                df = df[id_col.apply(classify_registry) == filter_register]
             logger.info(f"Register filter ({filter_register}): {before} → {len(df)} rows")
 
         logger.info(f"Extract complete: {len(df)} rows × {len(df.columns)} cols")
@@ -109,17 +117,3 @@ class ExtractService:
             callback=on_progress or (lambda c, t, tid, s, detail="": None),
         )
         return result
-
-
-# Register key → _id prefix mapping
-_REGISTER_PREFIXES = {
-    "CTGOV2": "NCT",
-    "EUCTR": "EUCTR",
-    "ISRCTN": "ISRCTN",
-    "CTIS": "EU",
-}
-
-
-def _register_prefix(register_key: str) -> str:
-    """Return the _id prefix for a register key (e.g. 'CTGOV2' → 'NCT')."""
-    return _REGISTER_PREFIXES.get(register_key, register_key)

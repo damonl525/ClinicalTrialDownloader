@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from core.constants import CONDITION_FIELDS, INTERVENTION_FIELDS
+from core.constants import CONDITION_FIELDS, INTERVENTION_FIELDS, classify_registry
 from core.exceptions import DatabaseError, CtrdataError
 from ctrdata import process as _proc
 from ctrdata.template_loader import render as _render
@@ -191,10 +191,20 @@ def extract_to_dataframe(
 
     dedup_block = ""
     if deduplicate:
+        # Use prefix matching (startsWith) instead of exact %in%:
+        # - CTGOV2/ISRCTN: dbFindIdsUniqueTrials returns full IDs, startsWith == exact match
+        # - EUCTR: db returns IDs WITHOUT country suffix ("EUCTR-2023-123456")
+        #   but database stores WITH suffix ("EUCTR-2023-123456-DE")
+        #   Prefix matching keeps all country variants of the same trial
         dedup_block = """
         unique_ids <- ctrdata::dbFindIdsUniqueTrials(con = con, verbose = FALSE)
-        if (length(unique_ids) > 0 && "_id" %in% names(df)) {
-            df <- df[df$`_id` %in% unique_ids, ]
+        if (length(unique_ids) > 0 && "_id" %in% names(df) && nrow(df) > 0) {
+            id_col <- as.character(df$`_id`)
+            mask <- rep(FALSE, length(id_col))
+            for (uid in unique_ids) {
+                mask <- mask | startsWith(id_col, uid)
+            }
+            df <- df[mask, ]
         }
         """
 
@@ -303,6 +313,13 @@ def extract_to_dataframe(
             # Python-side scope fallback (catches edge cases R prefix match missed)
             if scope_ids and "_id" in df.columns:
                 id_col = df["_id"].astype(str)
+                if logger.isEnabledFor(logging.DEBUG):
+                    scope_sample = {}
+                    for sid in scope_ids[:20]:
+                        r = classify_registry(sid)
+                        scope_sample.setdefault(r, []).append(sid)
+                    for r, ids in scope_sample.items():
+                        logger.debug(f"Scope IDs sample [{r}]: {ids[:5]}")
                 mask = id_col.apply(
                     lambda x: any(x.startswith(str(sid)) for sid in scope_ids)
                 )
@@ -321,14 +338,28 @@ def extract_to_dataframe(
                     logger.info(f"Filter status '{filter_status}': {_n} → {len(df)} rows")
                     _n = len(df)
 
-            # Date range filter — NaT values are preserved
+            # Date range filter — use _id year as fallback for empty startDate
+            # EUCTR/CTIS _id format: YYYY-NNNNNN-XX-XX (first 4 chars = year)
             if (filter_date_start or filter_date_end) and ".startDate" in df.columns:
                 df[".startDate"] = pd.to_datetime(df[".startDate"], errors="coerce")
+                has_date = df[".startDate"].notna()
+
+                # Build effective date: real date if available, else _id year midpoint
+                if "_id" in df.columns:
+                    id_years = df["_id"].astype(str).str[:4]
+                    fallback = pd.to_datetime(id_years + "-07-01", format="%Y-%m-%d", errors="coerce")
+                    effective_date = df[".startDate"].where(has_date, fallback)
+                else:
+                    effective_date = df[".startDate"]
+
                 mask = pd.Series(True, index=df.index)
                 if filter_date_start:
-                    mask &= (df[".startDate"] >= filter_date_start) | df[".startDate"].isna()
+                    mask &= effective_date >= pd.to_datetime(filter_date_start)
                 if filter_date_end:
-                    mask &= (df[".startDate"] <= filter_date_end) | df[".startDate"].isna()
+                    mask &= effective_date <= pd.to_datetime(filter_date_end)
+                # Drop rows where effective_date is still NaT (no date and unparseable _id)
+                mask &= effective_date.notna()
+
                 df = df[mask]
                 if len(df) != _n:
                     logger.info(f"Filter date [{filter_date_start}~{filter_date_end}]: {_n} → {len(df)} rows")

@@ -12,7 +12,7 @@ import re
 # ================================================================
 APP_NAME = "临床试验数据下载器"
 APP_NAME_EN = "Clinical Trial Data Downloader"
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.4.5"
 
 # ================================================================
 # 数据库
@@ -326,9 +326,47 @@ CDE_REG_CLASSES = {
 
 
 def classify_registry(tid: str) -> str:
-    """Classify a trial _id into its registry."""
+    """Classify a trial _id into its registry.
+
+    Returns one of: 'CTGOV2', 'ISRCTN', 'EUCTR', 'CTIS'.
+
+    Known _id formats:
+    - CTGOV2: "NCT04523532"
+    - ISRCTN: "ISRCTN12345678" or "12345678" (8 digits only)
+    - EUCTR: "YYYY-0NNNNN-XX-CC" where CC is country code, segment 2 starts with 0
+    - CTIS:  "YYYY-5NNNNN-NN-NN" where segment 2 starts with 5
+    """
+    if not tid or not isinstance(tid, str):
+        return "EUCTR"
     if tid.startswith("NCT"):
         return "CTGOV2"
     if tid.startswith("ISRCTN") or re.match(r"^\d{8}$", tid):
         return "ISRCTN"
-    return "EUCTR_CTIS"
+    # Both EUCTR and CTIS use YYYY-NNNNNN-XX-XX format.
+    # Distinguish by segment 2: CTIS uses 5xxxxx, EUCTR uses 0xxxxx.
+    parts = tid.split("-")
+    if len(parts) >= 2:
+        seg2 = parts[1]
+        if seg2 and seg2[0] == "5":
+            return "CTIS"
+    return "EUCTR"
+
+
+def trial_url(tid: str) -> str:
+    """Return the public web URL for a trial ID."""
+    reg = classify_registry(tid)
+    if reg == "CTGOV2":
+        return f"https://www.clinicaltrials.gov/study/{tid}"
+    if reg == "ISRCTN":
+        return f"https://www.isrctn.com/{tid}"
+    if reg == "CTIS":
+        return f"https://euclinicaltrials.eu/ctis-public/trial/{tid}"
+    # EUCTR: trial/{eudract-number}/{country-code}
+    if reg == "EUCTR":
+        parts = tid.split("-")
+        if len(parts) == 4:
+            eudract = "-".join(parts[:3])
+            country = parts[3]
+            return f"https://www.clinicaltrialsregister.eu/ctr-search/trial/{eudract}/{country}"
+        return f"https://www.clinicaltrialsregister.eu/ctr-search/search?query={tid}"
+    return f"https://www.google.com/search?q={tid}"

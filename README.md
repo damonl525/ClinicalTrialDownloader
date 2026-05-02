@@ -35,18 +35,21 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 
 ### Post-Download Filtering
 - Trial phase, recruitment status
-- Date range (start date)
+- Date range (start date; EUCTR uses _id year fallback when `.startDate` is empty)
 - Condition / intervention keywords
-- Register-based filtering
+- Register-based filtering (EUCTR/CTIS: concept function fields may be empty — ctrdata limitation)
 
 ### Document Download
 - PDF downloads (protocols, SAPs, statistical analysis, etc.)
+- CTGOV2: per-trial R subprocess with `documents.regexp` type filtering
 - ISRCTN: direct HTTP download via ISRCTN XML API (no R/chromote dependency)
-- Other registries: per-trial R subprocess with timeout isolation
+- EUCTR / CTIS: dedicated R templates with `euctrresults=TRUE` / `register="CTIS"`
 - Resume/checkpoint support with UI prompt on interrupted downloads
 - Configurable per-trial timeout via Settings
-- Document type filtering (protocol, SAP, or all)
+- Document type filtering (protocol, SAP, or all) — CTGOV2/ISRCTN/CTIS only
+- EUCTR does not support document type filtering (all files downloaded)
 - Protocol pre-filter: cross-registry (CTGOV2 + ISRCTN) metadata-based filtering
+- EUCTR/CTIS limitations warning: search confirmation dialog and download exclusion dialog
 
 ### FDA Review Documents
 - Standalone FDA tab — independent of trial data, no database or R environment required
@@ -64,7 +67,7 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 
 ### Data Table
 - Sortable columns with persisted widths
-- Right-click context menu (copy cell, row, selection, export selected)
+- Right-click context menu (copy cell, row, selection, export selected, open in browser)
 
 ### UI & Settings
 - Dark/Light/System theme switching
@@ -141,7 +144,7 @@ ctrdata/
   search_download.py             # Data download (single/multi URL)
   extract.py                     # Field extraction -> DataFrame
   documents.py                   # Document download with resume
-  templates/                     # R script templates
+  templates/                     # R script templates (download_one_trial_doc, download_euctr_trial_doc, download_ctis_trial_doc, ...)
 core/
   constants.py                   # All mappings, options, field definitions
   exceptions.py                  # CtrdataError hierarchy

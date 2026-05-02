@@ -4,6 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.5] - 2026-05-02
+
+### 修复
+- **EUCTR 文档下载全部跳过**：163/163 条 EUCTR 试验文档下载全部显示"跳过"，根因：`download_one_trial_doc.R` 模板缺少 `euctrresults=TRUE` 和 `register="EUCTR"` 参数，且 queryterm 格式错误（传入含国家后缀的完整 _id 而非 `query={eudract_number}` 格式）。新增 `_download_euctr_trial_doc()` 专用函数和 `download_euctr_trial_doc.R` 模板，正确处理 EUCTR 文档下载
+- **CTIS 文档下载同样跳过**：与 EUCTR 同理，通用模板未指定 `register="CTIS"`，ctrdata 无法从纯数字 ID 识别注册中心。新增 `_download_ctis_trial_doc()` 和 `download_ctis_trial_doc.R` 模板，显式指定 `register="CTIS"`（支持 `documents.regexp`）
+- **EUCTR 日期过滤结果不变**：不同日期范围（如 2026-01-01~ 和 2026-04-01~）提取 EUCTR 数据返回相同行数（163 行），根因：旧代码 `| df[".startDate"].isna()` 保留所有空日期行。改用 _id 年份作为 fallback（`YYYY-07-01`），EUCTR _id 前 4 位即试验年份
+- **下载取消摘要对话框**：取消下载后弹出摘要对话框，显示已完成/跳过/失败数量
+
+### 改进
+- **CSV 导出默认路径**：导出 CSV 默认保存到文档下载目录，而非数据库所在目录
+- **注册中心识别算法改进**：`classify_registry()` 改用第二段首字符区分 EUCTR（`0` 开头）和 CTIS（`5` 开头），不再依赖年份+末段数字的不可靠启发式，避免 EUCTR 2022+ 数字国家代码被误判为 CTIS
+- **EUCTR/CTIS 搜索与下载提醒**：搜索页勾选 EUCTR/CTIS 时弹确认窗提醒数据不完整；提取页文档下载时自动过滤 EUCTR/CTIS，弹窗说明限制并仅下载 CTGOV2/ISRCTN 文档
+- **右键「在浏览器中打开」**：提取页表格右键菜单新增「在浏览器中打开」，直接打开对应注册中心试验页面（CTGOV2/EUCTR/ISRCTN/CTIS 四个注册中心均支持）
+- **空结果提示优化**：提取结果为空时，根据是否勾选 Protocol 显示不同提示消息，避免误导
+
+### 已知限制
+- **EUCTR 概念函数字段为空**：`f.startDate`、`f.statusRecruitment`、`interventions` 对 EUCTR 数据全部为空，仅 `f.trialPhase` 有值。这是 ctrdata 限制，EUCTR 字段结构不兼容这些概念函数
+- **EUCTR 文档无法按类型筛选**：ctrdata 对 EUCTR 不支持 `documents.regexp`，所有文档都会被下载
+- **EUCTR 日期筛选精度有限**：EUCTR `.startDate` 为空，日期筛选使用 `_id` 前四位（注册年份）做近似，精度仅到年份
+
 ## [1.4.4] - 2026-04-30
 
 ### 新功能

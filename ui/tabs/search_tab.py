@@ -351,11 +351,15 @@ class SearchTab(QWidget):
         adv_row6.addStretch()
         adv_layout.addLayout(adv_row6)
 
-        # CTIS warning hint
-        ctis_hint = QLabel("⚠ CTIS 无公开 API，下载易超时；CTGOV2 覆盖面最广，通常够用")
-        ctis_hint.setStyleSheet("color: #94A3B8; font-size: 11px;")
-        ctis_hint.setContentsMargins(SPACING["lg"] + SPACING["sm"], 0, 0, 0)
-        adv_layout.addWidget(ctis_hint)
+        # EUCTR / CTIS warning hint
+        eu_ctis_hint = QLabel(
+            "⚠ EUCTR / CTIS 数据不完整（概念函数字段缺失、文档下载受限），"
+            "建议仅用于浏览。CTGOV2 覆盖面最广，通常够用。"
+        )
+        eu_ctis_hint.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        eu_ctis_hint.setWordWrap(True)
+        eu_ctis_hint.setContentsMargins(SPACING["lg"] + SPACING["sm"], 0, 0, 0)
+        adv_layout.addWidget(eu_ctis_hint)
 
         self._advanced_card.set_body_layout(adv_layout)
         form.addWidget(self._advanced_card)
@@ -576,6 +580,23 @@ class SearchTab(QWidget):
             QMessageBox.warning(self, "提示", "请至少选择一个注册中心")
             self._set_downloading(False)
             return
+
+        # Warn if EUCTR/CTIS selected
+        limited_regs = [r for r in selected_regs if r in ("EUCTR", "CTIS")]
+        if limited_regs:
+            reg_names = "、".join(limited_regs)
+            reply = QMessageBox.question(
+                self, "注册中心数据不完整",
+                f"您选择了 {reg_names}，该注册中心数据不完善：\n\n"
+                f"  - 概念函数字段缺失（日期、状态、干预措施等）\n"
+                f"  - 文档下载受限（EUCTR 无法按类型筛选，CTIS 易超时）\n"
+                f"  - 提取筛选结果可能不完整\n\n"
+                f"建议仅用于浏览，提取和文档下载请以 CTGOV2 / ISRCTN 为主。\n\n"
+                f"继续搜索？"
+            )
+            if reply != QMessageBox.Yes:
+                self._set_downloading(False)
+                return
 
         protocol_filter = self.protocol_only_check.isChecked()
         # Store for Export Tab to pick up during auto-extract

@@ -92,6 +92,12 @@ class MainWindow(QMainWindow):
         # Window icon
         self._set_window_icon()
 
+        # Auto-show guide on first launch (unless user opted out)
+        from PySide6.QtCore import QSettings
+        settings = QSettings("ctrdata_downloader", "MainWindow")
+        if not settings.value("guide_dont_show", False, type=bool):
+            self._show_guide_dialog(auto_opened=True)
+
     # ── Cleanup ──
 
     def closeEvent(self, event):
@@ -124,6 +130,22 @@ class MainWindow(QMainWindow):
         spacer.setStyleSheet("background: transparent;")
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         toolbar.addWidget(spacer)
+
+        # Guide button with icon (accent color for visibility)
+        self.guide_btn = QPushButton()
+        guide_icon = _icon("fa5s.book-open", color="#3B82F6")
+        if guide_icon:
+            self.guide_btn.setIcon(guide_icon)
+        else:
+            self.guide_btn.setText("指南")
+        self.guide_btn.setToolTip("查看操作指南 (F1)")
+        self.guide_btn.setShortcut("F1")
+        self.guide_btn.setStyleSheet(
+            "QPushButton { color: #3B82F6; border: 1px solid #3B82F6; border-radius: 4px; padding: 4px 8px; }"
+            "QPushButton:hover { background: #3B82F6; color: white; }"
+        )
+        self.guide_btn.clicked.connect(self._show_guide_dialog)
+        toolbar.addWidget(self.guide_btn)
 
         # Theme toggle button with icon
         self.theme_btn = QPushButton()
@@ -175,6 +197,11 @@ class MainWindow(QMainWindow):
     def _open_settings(self):
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
+        dlg.exec()
+
+    def _show_guide_dialog(self, auto_opened=False):
+        from ui.widgets.guide_dialog import GuideDialog
+        dlg = GuideDialog(self, auto_opened=auto_opened)
         dlg.exec()
 
     def _show_log_dialog(self):

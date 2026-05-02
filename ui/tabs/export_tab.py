@@ -30,7 +30,7 @@ from ui.widgets.progress import ProgressPanel
 from ui.widgets.table_model import PandasTableModel
 from core.constants import (
     CONCEPT_FUNCTIONS, DEFAULT_CONCEPTS, TREEVIEW_DISPLAY_LIMIT,
-    DOC_TYPE_OPTIONS, FILTER_PHASES, FILTER_STATUSES, classify_registry,
+    DOC_TYPE_OPTIONS, FILTER_PHASES, FILTER_STATUSES, classify_registry, trial_url,
 )
 from service.extract_service import ExtractService
 
@@ -525,6 +525,51 @@ class ExportTab(QWidget):
 
     # ── Data extraction ──
 
+    def _auto_scope_or_dialog(self, scope_ids, filter_register="") -> str | None:
+        """Smart scope selection: skip dialog when registry is already narrowed."""
+        # If user already selected a specific registry, no dialog needed
+        if filter_register:
+            reg_map = {
+                "CTGOV2": "CTGOV2",
+                "EUCTR": "EUCTR",
+                "ISRCTN": "ISRCTN",
+                "CTIS": "CTIS",
+            }
+            reg = reg_map.get(filter_register, "")
+            if reg == "CTGOV2":
+                return "ctgov_isrctn_only"
+            elif reg == "ISRCTN":
+                return "ctgov_isrctn_only"
+            else:  # EUCTR or CTIS
+                return "all_registries"
+
+        ids_to_check = scope_ids
+        if ids_to_check is None:
+            # Full-db mode: get IDs from bridge
+            if not self.app.bridge or not self.app.bridge.db_path:
+                return "ctgov_isrctn_only"
+            ids_to_check = self.app.bridge.get_all_trial_ids()
+            if not ids_to_check:
+                return "ctgov_isrctn_only"
+
+        # Early exit: scan IDs until 2+ registries found
+        registries = set()
+        for tid in ids_to_check:
+            registries.add(classify_registry(tid))
+            if len(registries) > 1:
+                break
+
+        if len(registries) <= 1:
+            reg = registries.pop() if registries else "CTGOV2"
+            if reg == "CTGOV2":
+                return "ctgov_isrctn_only"
+            elif reg == "ISRCTN":
+                return "ctgov_isrctn_only"
+            else:  # EUCTR or CTIS only
+                return "all_registries"
+
+        return self._ask_protocol_scope_dialog()
+
     def _ask_protocol_scope_dialog(self) -> str | None:
         """Ask user for Protocol filter scope. Returns 'ctgov_isrctn_only', 'all_registries', or None (cancelled)."""
         dialog = QMessageBox(self)
@@ -594,7 +639,7 @@ class ExportTab(QWidget):
         # GUI thread: ask user for Protocol scope before starting worker
         scope_choice = None
         if protocol_filter:
-            scope_choice = self._ask_protocol_scope_dialog()
+            scope_choice = self._auto_scope_or_dialog(scope_ids, filter_register)
             if scope_choice is None:
                 self._log("Protocol 过滤已取消，跳过提取")
                 return  # user cancelled
@@ -622,9 +667,14 @@ class ExportTab(QWidget):
                         else:  # "all_registries"
                             euctr_ctis_ids = [
                                 sid for sid in scope_ids
-                                if classify_registry(sid) == "EUCTR_CTIS"
+                                if classify_registry(sid) in ("EUCTR", "CTIS")
                             ]
                             effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
+                            self._log_signal.emit("info",
+                                f"Protocol scope breakdown: {len(protocol_ids)} CTGOV2+ISRCTN, "
+                                f"{len(euctr_ctis_ids)} EUCTR/CTIS, "
+                                f"{len(effective_scope)} total"
+                            )
                     else:
                         # Full-database mode
                         if scope_choice == "ctgov_isrctn_only":
@@ -635,7 +685,7 @@ class ExportTab(QWidget):
                                 self._log_signal.emit("warning", "获取全部试验ID失败，仅使用Protocol查询结果")
                             euctr_ctis_ids = [
                                 tid for tid in all_db_ids
-                                if classify_registry(tid) == "EUCTR_CTIS"
+                                if classify_registry(tid) in ("EUCTR", "CTIS")
                             ]
                             effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
 
@@ -708,15 +758,19 @@ class ExportTab(QWidget):
             pass
         self.extract_btn.setEnabled(True)
 
-        # Handle empty result (e.g., Protocol filter found no matches)
+        # Handle empty result
         if df is None or len(df) == 0:
             self.app.current_data = pd.DataFrame()
             self.app.filtered_ids = []
             self.table_model.update_data(pd.DataFrame())
             self._full_df = pd.DataFrame()
-            self.extract_info.setText("Protocol 过滤: 没有符合条件的试验")
-            self._log("Protocol 过滤: 没有符合条件的试验")
-            self.app.status.showMessage("没有含 Protocol 文档的试验")
+            if self.protocol_only_check.isChecked():
+                msg = "Protocol 过滤: 没有符合条件的试验"
+            else:
+                msg = "提取完成: 0 条符合条件的试验 (当前筛选条件无匹配)"
+            self.extract_info.setText(msg)
+            self._log(msg)
+            self.app.status.showMessage(msg)
             self._enable_doc_buttons(False)
             self.doc_status.setText("没有可下载的数据")
             return
@@ -837,6 +891,8 @@ class ExportTab(QWidget):
         copy_cell = menu.addAction("复制单元格")
         copy_row = menu.addAction("复制整行")
         menu.addSeparator()
+        open_browser = menu.addAction("在浏览器中打开")
+        menu.addSeparator()
         copy_selected = menu.addAction("复制选中行")
         export_selected = menu.addAction("导出选中行为 CSV")
 
@@ -847,6 +903,8 @@ class ExportTab(QWidget):
             self._copy_to_clipboard(val or "")
         elif action == copy_row:
             self._copy_rows([index.row()])
+        elif action == open_browser:
+            self._open_trial_in_browser(index.row())
         elif action == copy_selected:
             rows = sorted(set(i.row() for i in self.table_view.selectedIndexes()))
             self._copy_rows(rows)
@@ -856,6 +914,18 @@ class ExportTab(QWidget):
     def _copy_to_clipboard(self, text: str):
         from PySide6.QtWidgets import QApplication
         QApplication.clipboard().setText(text)
+
+    def _open_trial_in_browser(self, visual_row: int):
+        if self._full_df is None or "_id" not in self._full_df.columns:
+            return
+        page_start = (self._current_page - 1) * TREEVIEW_DISPLAY_LIMIT
+        source_row = page_start + visual_row
+        if source_row >= len(self._full_df):
+            return
+        tid = str(self._full_df.iloc[source_row]["_id"])
+        url = trial_url(tid)
+        import webbrowser
+        webbrowser.open(url)
 
     def _copy_rows(self, rows: list):
         if not rows or self._full_df is None:
@@ -916,13 +986,63 @@ class ExportTab(QWidget):
                     return
                 filtered_ids = search_ids
             else:
-                QMessageBox.warning(self, "提示", "没有可下载的试验数据")
+                QMessageBox.warning(
+                    self, "提示",
+                    "没有可下载的试验数据。\n\n"
+                    "请先提取数据（点击「提取数据」按钮），\n"
+                    "再为筛选后的试验下载文档。"
+                )
                 return
 
         docs_path = self.doc_path_input.text().strip()
         if not docs_path:
             QMessageBox.critical(self, "错误", "请指定文档保存路径")
             return
+
+        # Split into downloadable (CTGOV2+ISRCTN) and unsupported (EUCTR+CTIS)
+        downloadable = []
+        unsupported = {"EUCTR": [], "CTIS": []}
+        for tid in filtered_ids:
+            reg = classify_registry(tid)
+            if reg in ("CTGOV2", "ISRCTN"):
+                downloadable.append(tid)
+            else:
+                unsupported.setdefault(reg, []).append(tid)
+        unsupported_total = sum(len(v) for v in unsupported.values())
+
+        if unsupported_total > 0:
+            parts = []
+            if unsupported.get("EUCTR"):
+                parts.append(f"EUCTR: {len(unsupported['EUCTR'])} 条")
+            if unsupported.get("CTIS"):
+                parts.append(f"CTIS: {len(unsupported['CTIS'])} 条")
+            unsupported_desc = "、".join(parts)
+
+            if not downloadable:
+                QMessageBox.information(
+                    self, "无可下载的试验",
+                    f"当前 {len(filtered_ids)} 条试验均为 EUCTR/CTIS 记录。\n\n"
+                    f"由于 ctrdata 包限制，EUCTR 和 CTIS 的文档下载功能不完善\n"
+                    f"（EUCTR 无法按类型筛选，CTIS 无公开 API 容易超时），\n"
+                    f"暂不提供文档下载。\n\n"
+                    f"可通过右键菜单「在浏览器中打开」查看对应网页。"
+                )
+                return
+
+            reply = QMessageBox.question(
+                self, "EUCTR / CTIS 文档下载受限",
+                f"当前 {len(filtered_ids)} 条试验中有：\n"
+                f"  CTGOV2 / ISRCTN: {len(downloadable)} 条（可下载文档）\n"
+                f"  {unsupported_desc}\n\n"
+                f"由于 ctrdata 包限制，EUCTR / CTIS 文档下载功能不完善\n"
+                f"（EUCTR 概念函数字段缺失、文档无法按类型筛选；CTIS 无公开 API 不稳定），\n"
+                f"暂不提供文档下载。\n\n"
+                f"仅下载 CTGOV2 / ISRCTN 的 {len(downloadable)} 条文档？"
+            )
+            if reply != QMessageBox.Yes:
+                return
+            filtered_ids = downloadable
+            self.app.filtered_ids = downloadable
 
         # Check for interrupted download (resume support)
         from ctrdata.documents import _get_resume_file, _load_resume, _session_hash, _cleanup_resume
@@ -980,6 +1100,7 @@ class ExportTab(QWidget):
         per_trial_timeout = int(get_settings().value("doc/timeout", 120))
 
         def _worker():
+            self.app.bridge.clear_cancel()
             svc = ExtractService(self.app.bridge)
             try:
                 result = svc.download_documents(
@@ -1068,9 +1189,8 @@ class ExportTab(QWidget):
         self._log("用户取消文档下载")
         if self.app.bridge:
             self.app.bridge.cancel()
-        self.doc_status.setText("已取消")
-        self._enable_doc_buttons(True)
-        self.doc_progress.reset()
+        # Worker will detect _cancelled flag, break loop, and emit _doc_complete
+        # which triggers _on_doc_complete with partial results summary
 
     # ── Logging ──
 
@@ -1096,8 +1216,11 @@ class ExportTab(QWidget):
             QMessageBox.warning(self, "提示", "没有数据可导出")
             return
 
+        # Default CSV path: use documents download directory
+        default_dir = self.doc_path_input.text().strip() or os.path.expanduser("~")
+        default_csv = os.path.join(default_dir, "clinical_trials_data.csv")
         filename, _ = QFileDialog.getSaveFileName(
-            self, "导出 CSV", "clinical_trials_data.csv",
+            self, "导出 CSV", default_csv,
             "CSV 文件 (*.csv);;All Files (*)"
         )
         if filename:
