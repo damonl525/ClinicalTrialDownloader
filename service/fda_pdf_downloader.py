@@ -42,6 +42,13 @@ _COOLDOWN_DELAY = 60000  # 60 seconds
 _MAX_CONSECUTIVE_FAILURES = 2
 
 
+class _SilentPage(QWebEnginePage):
+    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
+
+    def javaScriptConsoleMessage(self, level, message, line, sourceId):
+        logger.debug("JS [%s:%d] %s", sourceId, line, message)
+
+
 class FdaPdfDownloader(QObject):
     """Download FDA review PDFs via Chromium browser engine.
 
@@ -160,7 +167,7 @@ class FdaPdfDownloader(QObject):
         if self._page:
             self._page.deleteLater()
 
-        self._page = QWebEnginePage(self._profile, self)
+        self._page = _SilentPage(self._profile, self)
 
         # Timeout timer
         if self._timeout_timer:

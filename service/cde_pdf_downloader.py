@@ -62,6 +62,13 @@ def _make_download_filename(drug_name: str, accept_id: str, doc_type: str) -> st
     return f"{prefix}_{accept_id}_{doc_type}.pdf"
 
 
+class _SilentPage(QWebEnginePage):
+    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
+
+    def javaScriptConsoleMessage(self, level, message, line, sourceId):
+        logger.debug("JS [%s:%d] %s", sourceId, line, message)
+
+
 class CdePdfDownloader(QObject):
     """Download CDE 审评报告/说明书 PDFs via Chromium browser engine.
 
@@ -125,7 +132,7 @@ class CdePdfDownloader(QObject):
         # Create a single reusable page
         if self._page:
             self._page.deleteLater()
-        self._page = QWebEnginePage(self._profile, self)
+        self._page = _SilentPage(self._profile, self)
 
         logger.info(
             "开始下载CDE审评文档: %d 个文件, 保存到 %s",

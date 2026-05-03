@@ -4,6 +4,22 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.4.6] - 2026-05-03
+
+### 新功能
+- **FDA 全量预取**：搜索时自动获取全部 API 数据页（每页100条申请记录），不再按 API 页翻页，确保审评文档结果完整。进度实时显示"第 X/Y 页，已发现 Z 条文档"
+- **客户端分页**：FDA 搜索结果改为客户端分页（每页200条），翻页瞬间完成，无需重新请求 API 或重新解析 TOC
+
+### 修复
+- **FDA 日期过滤无效**：openFDA API 返回整个申请记录（含所有历史 submission），展平后未做日期后过滤，导致搜索 2025+ 日期时出现 2004、2005 等早期提交日期。新增 `_flatten_results()` 日期范围过滤，两层过滤：API 层过滤申请，展平层过滤 submission
+- **JS 控制台错误输出**：FDA/CDE 四个 QWebEngine service 文件加载网页时，FDA/CDE 网站自身的 JavaScript 错误（Container not found、SyntaxError 等）直接打印到 stderr。新增 `_SilentPage` 类重写 `javaScriptConsoleMessage()`，路由到 Python logger
+- **FDA 搜索结果标签显示"共 0 条API结果"**：`_current_total` 未在新流程中赋值，已修正标签文案
+
+### 改进
+- **TOC 缓存**：FDA TOC 目录页解析结果按 URL 缓存，翻页时跳过已解析的 TOC URL，全部缓存命中时直接展开无需重新解析
+- **操作指南更新**：新增 FDA 审评文档说明（openFDA 返回申请记录而非文档、ANDA/SUPPL 通常无审评文档、建议优先输入药物名称精确搜索）；FDA 搜索步骤更新为全量预取流程
+- **代码注释**：`fda_service.py` 新增两层日期过滤架构说明注释
+
 ## [1.4.5] - 2026-05-02
 
 ### 修复

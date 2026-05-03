@@ -35,6 +35,13 @@ class TocPageData:
     approval_date: Optional[str] = None
 
 
+class _SilentPage(QWebEnginePage):
+    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
+
+    def javaScriptConsoleMessage(self, level, message, line, sourceId):
+        logger.debug("JS [%s:%d] %s", sourceId, line, message)
+
+
 class FdaTocParser(QObject):
     """Parse FDA TOC pages using hidden QWebEnginePage instances.
 
@@ -102,7 +109,7 @@ class FdaTocParser(QObject):
 
     def _load_page(self, url: str, _retry: int = 0):
         """Load a single TOC URL in a hidden QWebEnginePage."""
-        page = QWebEnginePage(self)
+        page = _SilentPage(self)
 
         # Timer for timeout
         timer = QTimer(self)

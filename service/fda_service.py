@@ -165,7 +165,9 @@ class FdaSearchService:
 
         total = data.get("meta", {}).get("results", {}).get("total", 0)
         results = data.get("results", [])
-        rows = self._flatten_results(results)
+        date_from = params.get("date_from", "").replace("-", "")
+        date_to = params.get("date_to", "").replace("-", "")
+        rows = self._flatten_results(results, date_from, date_to)
 
         toc_count = sum(
             1 for r in rows if r.get("doc_url", "").lower().endswith((".html", ".cfm"))
@@ -178,14 +180,93 @@ class FdaSearchService:
         return {"rows": rows, "total": total}
 
     # ------------------------------------------------------------------
+    # Two-layer date filtering architecture
+    # ------------------------------------------------------------------
+    # Layer 1 — API level (application-level):
+    #   The openFDA query `submissions.submission_status_date:[FROM+TO+TO]`
+    #   returns entire application records where ANY submission matches the
+    #   date range. An application with 10 submissions (9 old + 1 new) is
+    #   returned if that 1 new submission falls within the range.
+    #
+    # Layer 2 — Flatten level (submission-level):
+    #   _flatten_results() walks ALL submissions in each application and
+    #   post-filters by date_from/date_to. This removes old submissions
+    #   that were included because the API returns the entire record.
+    #
+    # Example: ANDA075968 has submissions from 2002, 2015, 2018, 2024, 2025.
+    #   API layer: matched (has 2025 submission) → entire record returned.
+    #   Flatten layer: only 2025 submissions kept → old ones discarded.
+    #
+    # Data flow: user_date → API query → 4715 apps → flatten filter → 128 docs
+    # ------------------------------------------------------------------
+
+    def search_all(
+        self,
+        params: dict,
+        on_progress: Callable[[int, int, int], None] = None,
+        on_cancel: Callable[[], bool] = None,
+    ) -> dict:
+        """Fetch ALL API pages and return accumulated flattened rows.
+
+        Loops through API pagination (100 records/page) until all results
+        are retrieved. Each page is flattened immediately (date-filtered).
+
+        Args:
+            params: Search parameters dict
+            on_progress: Callback(current_page, total_pages, accumulated_doc_count)
+            on_cancel: Callback() returning True to abort
+
+        Returns:
+            {"rows": [...], "api_total": N}
+        """
+        all_rows: List[dict] = []
+        skip = 0
+        api_total = 0
+
+        while True:
+            if on_cancel and on_cancel():
+                break
+
+            result = self.search(params, skip=skip)
+            rows = result.get("rows", [])
+            api_total = result.get("total", 0)
+
+            if api_total == 0 and not rows:
+                break
+
+            all_rows.extend(rows)
+            skip += 100
+
+            total_pages = max(1, (api_total + 99) // 100)
+            current_page = min(skip // 100, total_pages)
+
+            if on_progress:
+                on_progress(current_page, total_pages, len(all_rows))
+
+            if skip >= api_total:
+                break
+
+        logger.info(
+            "FDA全量搜索完成: API共 %d 条, %d 页, 展平后 %d 条审评文档",
+            api_total, max(1, (api_total + 99) // 100), len(all_rows),
+        )
+
+        return {"rows": all_rows, "api_total": api_total}
+
+    # ------------------------------------------------------------------
     # Result flattening
     # ------------------------------------------------------------------
 
-    def _flatten_results(self, results: list) -> List[dict]:
+    def _flatten_results(
+        self, results: list, date_from: str = "", date_to: str = ""
+    ) -> List[dict]:
         """Flatten nested API response into one row per review document.
 
         Walks: results[].submissions[].application_docs[]
         Only includes documents whose type matches FDA_REVIEW_DOC_TYPES or "Review".
+        Post-filters submissions by date_from/date_to (YYYYMMDD format).
+        The API returns entire applications when any submission matches the date
+        query, so we must filter here to exclude out-of-range submissions.
         """
         rows = []
         seen_urls = set()
@@ -206,6 +287,13 @@ class FdaSearchService:
             for submission in result.get("submissions", []):
                 sub_type = submission.get("submission_type", "")
                 sub_date = submission.get("submission_status_date", "")
+
+                # Post-filter: API returns entire applications; exclude
+                # submissions outside the user's date range
+                if date_from and sub_date < date_from:
+                    continue
+                if date_to and sub_date > date_to:
+                    continue
 
                 for doc in submission.get("application_docs", []):
                     doc_type = doc.get("type", "")

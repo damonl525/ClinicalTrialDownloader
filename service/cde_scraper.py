@@ -28,6 +28,13 @@ _POLL_INTERVAL_MS = 200   # polling interval for async XHR result
 _MAX_POLL_ATTEMPTS = 30   # 30 * 200ms = 6s max wait
 
 
+class _SilentPage(QWebEnginePage):
+    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
+
+    def javaScriptConsoleMessage(self, level, message, line, sourceId):
+        logger.debug("JS [%s:%d] %s", sourceId, line, message)
+
+
 class CdeListScraper(QObject):
     """Scrape CDE marketed drug list by calling the internal API via QWebEngine.
 
@@ -134,7 +141,7 @@ class CdeListScraper(QObject):
         if self._active_page:
             self._active_page.deleteLater()
 
-        self._active_page = QWebEnginePage(self._profile, self)
+        self._active_page = _SilentPage(self._profile, self)
 
         if self._page_timer:
             self._page_timer.deleteLater()
@@ -460,7 +467,7 @@ class CdeListScraper(QObject):
         """Load a single detail page and extract PDF links."""
         from core.constants import CDE_PAGE_TIMEOUT
 
-        page = QWebEnginePage(self._profile, self)
+        page = _SilentPage(self._profile, self)
         timer = QTimer(self)
         timer.setSingleShot(True)
 

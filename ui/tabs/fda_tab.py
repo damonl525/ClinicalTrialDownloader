@@ -51,19 +51,25 @@ class FdaTab(QWidget):
 
     # Signals for thread-safe communication
     _search_complete = Signal(dict)
+    _search_progress = Signal(int, int, int)  # page, total_pages, doc_count
     _search_error = Signal(str)
     _toc_parse_complete = Signal(dict)  # {toc_url: TocPageData | None}
     _toc_parse_error = Signal(str)
     _download_complete = Signal(dict)   # {success: [paths], failed: [{...}]}
 
+    # Client-side pagination page size
+    _PAGE_SIZE = 200
+
     def __init__(self, app, parent=None):
         super().__init__(parent)
         self.app = app
         self._current_params = {}
-        self._current_skip = 0
         self._current_total = 0
         self._all_rows = []
+        self._display_page = 0
         self._downloader = None
+        self._toc_cache = {}  # toc_url -> TocPageData | None
+        self._cancel_search = False
 
         layout = QVBoxLayout(self)
         layout.setSpacing(SPACING["md"])
@@ -74,6 +80,7 @@ class FdaTab(QWidget):
 
         # Signal connections
         self._search_complete.connect(self._on_search_complete)
+        self._search_progress.connect(self._on_search_progress)
         self._search_error.connect(self._on_search_error)
         self._toc_parse_complete.connect(self._on_toc_parse_complete)
         self._toc_parse_error.connect(self._on_toc_parse_error)
@@ -294,39 +301,48 @@ class FdaTab(QWidget):
             QMessageBox.warning(self, "提示", "请至少输入一个搜索条件（药物名称、日期范围或高级筛选）")
             return
 
+        # Clear TOC cache when search params change
+        if params != self._current_params:
+            self._toc_cache.clear()
         self._current_params = params
-        self._current_skip = 0
+        self._cancel_search = False
         self.search_btn.setEnabled(False)
-        self.result_label.setText("正在搜索...")
+        self.result_label.setText("正在获取FDA数据...")
         logger.info("FDA搜索请求: %s", params.get("drug_name", ""))
 
         def _worker():
             try:
                 from service.fda_service import FdaSearchService
                 svc = FdaSearchService()
-                result = svc.search(params, skip=0)
-                self._search_complete.emit(result)
+                result = svc.search_all(
+                    params,
+                    on_progress=lambda p, t, r: self._search_progress.emit(p, t, r),
+                    on_cancel=lambda: self._cancel_search,
+                )
+                if not self._cancel_search:
+                    self._search_complete.emit(result)
             except Exception as e:
-                self._search_error.emit(str(e))
+                if not self._cancel_search:
+                    self._search_error.emit(str(e))
 
         threading.Thread(target=_worker, daemon=True).start()
 
+    def _on_search_progress(self, page, total_pages, doc_count):
+        self.result_label.setText(
+            f"正在获取FDA数据 (第 {page}/{total_pages} 页, 已发现 {doc_count} 条文档)..."
+        )
+
     def _on_search_complete(self, result):
         rows = result.get("rows", [])
-        self._current_total = result.get("total", 0)
+        api_total = result.get("api_total", 0)
 
-        if not rows and self._current_total == 0:
+        if not rows:
             self.search_btn.setEnabled(True)
-            self.result_label.setText("未找到结果")
+            self.result_label.setText(
+                f"未找到审评文档（API返回 {api_total} 条记录，无审评文档匹配）"
+            )
             self.table.set_data([], [])
             self._all_rows = []
-            return
-        elif not rows:
-            self.search_btn.setEnabled(True)
-            self.result_label.setText("当前页无审评文档结果")
-            self.table.set_data([], [])
-            self._all_rows = []
-            self._update_page_label()
             return
 
         # Check if any TOC URLs need parsing
@@ -336,21 +352,41 @@ class FdaTab(QWidget):
         })
 
         logger.info(
-            "FDA搜索结果: %d 条API结果, 其中 %d 条含TOC目录",
-            self._current_total, len(toc_urls),
+            "FDA搜索结果: %d 条API记录, 展平后 %d 条文档, 其中 %d 条TOC",
+            api_total, len(rows), len(toc_urls),
         )
 
         if not toc_urls:
             # No TOC rows — show directly
-            self._populate_table(rows)
+            shown = self._populate_table(rows)
             self.search_btn.setEnabled(True)
-            self.result_label.setText(f"共 {self._current_total} 条结果")
+            self.result_label.setText(f"共 {shown} 条审评文档")
             return
 
-        # Parse TOC pages to determine which PDFs exist
-        self.result_label.setText(f"正在解析审评文档目录 (0/{len(toc_urls)})...")
-        self._toc_urls = toc_urls
+        # Check TOC cache — skip already-parsed URLs
+        uncached_urls = [u for u in toc_urls if u not in self._toc_cache]
+
+        if not uncached_urls:
+            # All TOC URLs cached — expand directly without parsing
+            merged = {u: self._toc_cache[u] for u in toc_urls}
+            from service.fda_service import FdaSearchService
+            svc = FdaSearchService()
+            expanded = svc.expand_from_pdffiles(rows, merged)
+            shown = self._populate_table(expanded)
+            self.search_btn.setEnabled(True)
+            self.result_label.setText(f"共 {shown} 条审评文档")
+            logger.info("FDA目录全部缓存命中，跳过解析")
+            return
+
+        # Parse only uncached TOC URLs
+        cached_count = len(toc_urls) - len(uncached_urls)
+        if cached_count > 0:
+            logger.info(
+                "FDA目录: %d/%d 已缓存，解析 %d 个新URL",
+                cached_count, len(toc_urls), len(uncached_urls),
+            )
         self._toc_raw_rows = rows
+        self.result_label.setText(f"正在解析审评文档目录 (0/{len(uncached_urls)})...")
 
         try:
             from service.fda_toc_parser import FdaTocParser
@@ -358,7 +394,7 @@ class FdaTab(QWidget):
             self._toc_parser.parse_progress.connect(self._on_toc_parse_progress)
             self._toc_parser.parse_complete.connect(self._toc_parse_complete.emit)
             self._toc_parser.parse_error.connect(self._toc_parse_error.emit)
-            self._toc_parser.parse(toc_urls)
+            self._toc_parser.parse(uncached_urls)
         except ImportError:
             logger.warning("PySide6-WebEngineWidgets 不可用，使用降级展开")
             self._fallback_expand(rows)
@@ -368,19 +404,31 @@ class FdaTab(QWidget):
 
     def _on_toc_parse_complete(self, toc_data):
         self.search_btn.setEnabled(True)
+
+        # Update cache with newly parsed results
+        self._toc_cache.update(toc_data)
+
+        # Build merged toc_data: cached + newly parsed for all TOC URLs
+        all_toc_urls = {
+            r["doc_url"] for r in self._toc_raw_rows
+            if r.get("doc_url", "").lower().endswith((".html", ".cfm"))
+        }
+        merged = {u: self._toc_cache.get(u) for u in all_toc_urls}
+
         from service.fda_service import FdaSearchService
         svc = FdaSearchService()
-        expanded = svc.expand_from_pdffiles(self._toc_raw_rows, toc_data)
+        expanded = svc.expand_from_pdffiles(self._toc_raw_rows, merged)
         shown = self._populate_table(expanded)
 
         success = sum(1 for v in toc_data.values() if v is not None)
-        if shown != self._current_total:
-            self.result_label.setText(
-                f"共 {self._current_total} 条API结果，解析后 {shown} 条确认文档"
-            )
-        else:
-            self.result_label.setText(f"共 {shown} 条结果")
-        logger.info("FDA目录解析完成: 展开为 %d 条确认文档", shown)
+        cache_size = len(self._toc_cache)
+        self.result_label.setText(
+            f"共 {shown} 条确认审评文档（{cache_size} 个TOC目录）"
+        )
+        logger.info(
+            "FDA目录解析完成: 展开为 %d 条确认文档, 缓存 %d 条",
+            shown, cache_size,
+        )
 
     def _on_toc_parse_error(self, error_msg):
         self.search_btn.setEnabled(True)
@@ -402,13 +450,25 @@ class FdaTab(QWidget):
             self.result_label.setText("未找到审评文档")
 
     def _populate_table(self, rows) -> int:
-        """Map row dicts to table data and display. Returns row count."""
+        """Store all expanded rows and display first page. Returns total count."""
+        self._all_rows = rows
+        self._display_page = 0
+        self._show_page()
+        return len(rows)
+
+    def _show_page(self):
+        """Render current page of results in table."""
+        total = len(self._all_rows)
+        start = self._display_page * self._PAGE_SIZE
+        end = min(start + self._PAGE_SIZE, total)
+        page = self._all_rows[start:end]
+
         columns = [
             "药物名", "通用名", "申请号", "厂商",
             "提交类型", "提交日期", "文档类型",
         ]
         data = []
-        for r in rows:
+        for r in page:
             data.append([
                 r.get("brand_name", ""),
                 r.get("generic_name", ""),
@@ -420,9 +480,7 @@ class FdaTab(QWidget):
             ])
 
         self.table.set_data(columns, data)
-        self._all_rows = rows
         self._update_page_label()
-        return len(rows)
 
     def _on_search_error(self, error_msg):
         self.search_btn.setEnabled(True)
@@ -430,44 +488,34 @@ class FdaTab(QWidget):
         logger.error("FDA搜索失败: %s", error_msg)
         QMessageBox.critical(self, "搜索失败", error_msg)
 
-    # -- Pagination --
+    # -- Client-side pagination --
 
     def _update_page_label(self):
-        shown = self.table.row_count()
-        start = self._current_skip + 1
-        end = self._current_skip + shown
-        self.page_label.setText(
-            f"第 {start}-{end} 条，共 {self._current_total} 条"
-        )
-        self.prev_btn.setEnabled(self._current_skip > 0)
-        self.next_btn.setEnabled(end < self._current_total)
+        total = len(self._all_rows)
+        if total == 0:
+            self.page_label.setText("")
+            self.prev_btn.setEnabled(False)
+            self.next_btn.setEnabled(False)
+            return
+        start = self._display_page * self._PAGE_SIZE + 1
+        end = min(start + self._PAGE_SIZE - 1, total)
+        self.page_label.setText(f"第 {start}-{end} 条，共 {total} 条")
+        total_pages = (total + self._PAGE_SIZE - 1) // self._PAGE_SIZE
+        self.prev_btn.setEnabled(self._display_page > 0)
+        self.next_btn.setEnabled(self._display_page < total_pages - 1)
 
     def _prev_page(self):
-        if self._current_skip >= 100:
-            self._current_skip -= 100
-        else:
-            self._current_skip = 0
-        self._fetch_page()
+        if self._display_page > 0:
+            self.table.uncheck_all()
+            self._display_page -= 1
+            self._show_page()
 
     def _next_page(self):
-        self._current_skip += 100
-        self._fetch_page()
-
-    def _fetch_page(self):
-        self.search_btn.setEnabled(False)
-        self.result_label.setText("正在加载...")
-        self.table.uncheck_all()  # Clear selections from previous page
-
-        def _worker():
-            try:
-                from service.fda_service import FdaSearchService
-                svc = FdaSearchService()
-                result = svc.search(self._current_params, skip=self._current_skip)
-                self._search_complete.emit(result)
-            except Exception as e:
-                self._search_error.emit(str(e))
-
-        threading.Thread(target=_worker, daemon=True).start()
+        total_pages = (len(self._all_rows) + self._PAGE_SIZE - 1) // self._PAGE_SIZE
+        if self._display_page < total_pages - 1:
+            self.table.uncheck_all()
+            self._display_page += 1
+            self._show_page()
 
     # -- Reset --
 
@@ -497,7 +545,12 @@ class FdaTab(QWidget):
         if not checked:
             return
 
-        docs = [self._all_rows[i] for i in checked if i < len(self._all_rows)]
+        offset = self._display_page * self._PAGE_SIZE
+        docs = [
+            self._all_rows[offset + i]
+            for i in checked
+            if offset + i < len(self._all_rows)
+        ]
         urls = [d.get("doc_url", "") for d in docs if d.get("doc_url")]
         if not urls:
             QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
@@ -539,7 +592,12 @@ class FdaTab(QWidget):
         if not checked:
             return
 
-        docs = [self._all_rows[i] for i in checked if i < len(self._all_rows)]
+        offset = self._display_page * self._PAGE_SIZE
+        docs = [
+            self._all_rows[offset + i]
+            for i in checked
+            if offset + i < len(self._all_rows)
+        ]
         docs = [d for d in docs if d.get("doc_url", "")]
         if not docs:
             QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
@@ -668,10 +726,11 @@ class FdaTab(QWidget):
 
     def _on_table_context_menu(self, source_row: int, global_pos):
         """Show context menu for right-clicked row."""
-        if source_row >= len(self._all_rows):
+        idx = self._display_page * self._PAGE_SIZE + source_row
+        if idx >= len(self._all_rows):
             return
 
-        row_data = self._all_rows[source_row]
+        row_data = self._all_rows[idx]
         url = row_data.get("doc_url", "")
 
         menu = QMenu(self)

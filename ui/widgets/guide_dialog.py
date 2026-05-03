@@ -81,6 +81,7 @@ _GUIDE_HTML = """
 <ol>
   <li>「FDA审评资料」标签页独立运行，无需数据库</li>
   <li>输入药物名称或日期范围搜索</li>
+  <li>搜索会获取全部 API 数据页，自动解析审评文档目录后展示</li>
   <li>批量下载 FDA 审评报告 PDF</li>
 </ol>
 
@@ -133,6 +134,20 @@ _GUIDE_HTML = """
     </ul>
   </li>
   <li><b>建议</b>：提取筛选和文档下载请以 <b>ClinicalTrials.gov</b> 和 <b>ISRCTN</b> 为主，EUCTR/CTIS 仅用于浏览参考</li>
+</ul>
+
+<h3 style="color: #F59E0B;">⚠ FDA 审评文档说明</h3>
+<ul>
+  <li>openFDA 返回的是<b>药品申请记录</b>（包括 NDA、ANDA、BLA 等），并非每条记录都有审评文档</li>
+  <li><b>无文档的常见情况</b>：
+    <ul>
+      <li><b>ANDA（仿制药）</b>：补充申请（SUPPL）通常不带审评文档</li>
+      <li><b>SUPPL（补充申请）</b>：标签变更、规格调整等，FDA 不发布审评报告</li>
+      <li><b>老药续期</b>：只有行政记录，无公开审评 PDF</li>
+    </ul>
+  </li>
+  <li>搜索时会获取全部 API 数据页并自动解析 TOC 目录，最终仅展示<b>确认存在</b>的审评文档</li>
+  <li><b>建议</b>：优先输入药物名称精确搜索，纯日期范围搜索可能返回大量无文档的申请记录，耗时较长</li>
 </ul>
 
 <hr>
