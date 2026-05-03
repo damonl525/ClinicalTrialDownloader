@@ -595,14 +595,12 @@ def _make_download_filename(
 ) -> str:
     """Generate filename: {brand_name}_{submission_type}_{date}_{doc_type}.pdf"""
     import re
-    # Map API doc_type to short label; fallback to underscored English name
-    cn_type = FDA_REVIEW_DOC_TYPES.get(doc_type, doc_type.replace(" ", "_"))
-    # Sanitize for filesystem
-    cn_type = cn_type.replace("/", "_").replace("\\", "_")
-    cn_type = re.sub(r'[:*?"<>|]', '', cn_type)
+    # Keep English doc_type in filename (e.g. "Medical_Review", not "医学审评")
+    safe_type = doc_type.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    safe_type = re.sub(r'[:*?"<>|]', '', safe_type)
 
-    prefix = brand_name if brand_name else cn_type
+    prefix = brand_name if brand_name else safe_type
     prefix = prefix.replace("/", "_").replace("\\", "_").replace(" ", "_")
     prefix = re.sub(r'[:*?"<>|]', '', prefix)
 
-    return f"{prefix}_{submission_type}_{date}_{cn_type}.pdf"
+    return f"{prefix}_{submission_type}_{date}_{safe_type}.pdf"

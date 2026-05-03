@@ -132,12 +132,19 @@ class FilterTableView(QTableView):
         columns: list,
         data: list,
         filterable: list = None,
+        keep_filters: bool = False,
     ):
-        """Load data into the table."""
+        """Load data into the table.
+
+        Args:
+            keep_filters: If True, preserve current column filters across
+                          data reload (e.g. pagination). If False, clear all.
+        """
+        saved = dict(self._proxy_model._column_filters) if keep_filters else None
         self._columns = columns
         self._source_model = _TableModel(columns, data, self)
         self._proxy_model.setSourceModel(self._source_model)
-        self._proxy_model.set_column_filters({})
+        self._proxy_model.set_column_filters(saved or {})
         self._filterable_columns = set(filterable or range(len(columns)))
 
         # Set checkbox column width

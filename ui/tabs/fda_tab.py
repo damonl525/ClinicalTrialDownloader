@@ -453,10 +453,10 @@ class FdaTab(QWidget):
         """Store all expanded rows and display first page. Returns total count."""
         self._all_rows = rows
         self._display_page = 0
-        self._show_page()
+        self._show_page(clear_filters=True)
         return len(rows)
 
-    def _show_page(self):
+    def _show_page(self, clear_filters: bool = False):
         """Render current page of results in table."""
         total = len(self._all_rows)
         start = self._display_page * self._PAGE_SIZE
@@ -479,7 +479,7 @@ class FdaTab(QWidget):
                 r.get("doc_type", ""),
             ])
 
-        self.table.set_data(columns, data)
+        self.table.set_data(columns, data, keep_filters=not clear_filters)
         self._update_page_label()
 
     def _on_search_error(self, error_msg):
