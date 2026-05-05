@@ -56,7 +56,6 @@ class CdeListScraper(QObject):
         self._all_rows: List[dict] = []
         self._current_page = 0
         self._total_pages = 0
-        self._scrape_all = False
         self._cancelled = False
         self._active_page: Optional[QWebEnginePage] = None
         self._page_timer: Optional[QTimer] = None
@@ -73,9 +72,9 @@ class CdeListScraper(QObject):
         self._load_attempts = 0
 
     def scrape(self, keyword: str = "", date_from: str = "", date_to: str = "",
-               drug_type: str = "", apply_type: str = "", reg_class: str = "",
-               scrape_all: bool = False):
-        """Start scraping list pages.
+               drug_type: str = "", apply_type: str = "", reg_class: str = ""):
+        """Start scraping list pages. Always fetches all pages with early
+        termination when date_from is set and all records are too old.
 
         Args:
             keyword: drug name keyword search
@@ -84,12 +83,10 @@ class CdeListScraper(QObject):
             drug_type: drug type filter, applied client-side
             apply_type: application type filter, applied client-side
             reg_class: registration class filter, applied client-side
-            scrape_all: True = fetch all pages; False = first page only
         """
         from core.constants import CDE_LIST_URL
 
         self._cancelled = False
-        self._scrape_all = scrape_all
         self._all_rows = []
         self._current_page = 0
         self._total_pages = 0
@@ -363,7 +360,22 @@ class CdeListScraper(QObject):
         if self._cancelled:
             return
 
-        if self._current_page < self._total_pages and self._scrape_all:
+        # Early termination: if date_from is set and ALL records on this page
+        # are older than date_from, stop crawling (results are newest-first).
+        if self._date_from and records:
+            all_too_old = all(
+                self._normalize_date(rec.get("createddate", "")) < self._date_from
+                for rec in records
+            )
+            if all_too_old:
+                logger.info(
+                    "CDE提前终止: 第%d页全部记录早于 %s，停止爬取",
+                    page_num, self._date_from,
+                )
+                self.scrape_complete.emit(list(self._all_rows))
+                return
+
+        if self._current_page < self._total_pages:
             import random
             delay = random.randint(2000, 4000)
             next_page = self._current_page + 1

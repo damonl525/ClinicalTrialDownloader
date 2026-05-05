@@ -144,10 +144,11 @@ class CdeTab(QWidget):
         page_row.addWidget(self.page_label)
         page_row.addStretch()
 
-        # Scrape all checkbox
-        self.scrape_all_checkbox = QCheckBox("爬取全部页")
-        self.scrape_all_checkbox.setToolTip("勾选后自动翻页爬取所有记录")
-        page_row.addWidget(self.scrape_all_checkbox)
+        reg_info_btn = QPushButton("注册分类说明")
+        reg_info_btn.setObjectName("secondary")
+        reg_info_btn.setFixedHeight(24)
+        reg_info_btn.clicked.connect(self._show_reg_class_info)
+        page_row.addWidget(reg_info_btn)
 
         parent_layout.addLayout(page_row)
 
@@ -231,7 +232,6 @@ class CdeTab(QWidget):
         if reg_class:
             params["reg_class"] = reg_class
 
-        params["scrape_all"] = self.scrape_all_checkbox.isChecked()
         return params
 
     def _do_search(self):
@@ -270,7 +270,6 @@ class CdeTab(QWidget):
                 drug_type=params.get("drug_type", ""),
                 apply_type=params.get("apply_type", ""),
                 reg_class=params.get("reg_class", ""),
-                scrape_all=params.get("scrape_all", False),
             )
         except Exception as e:
             self._scrape_error.emit(str(e))
@@ -324,12 +323,27 @@ class CdeTab(QWidget):
         self.table.set_data(columns, data)
 
     def _update_page_label(self):
-        shown = self.table.row_count()
-        start = (self._current_page - 1) * 10 + 1 if self._current_page else 1
-        end = start + shown - 1
-        self.page_label.setText(
-            f"第 {start}-{end} 条，共 {len(self._all_rows)} 条"
-        )
+        total = len(self._all_rows)
+        if total:
+            self.page_label.setText(f"共 {total} 条记录")
+        else:
+            self.page_label.setText("")
+
+    def _show_reg_class_info(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox
+        dlg = QDialog(self)
+        dlg.setWindowTitle("化学药品注册分类说明")
+        dlg.setMinimumWidth(520)
+        dlg.setMinimumHeight(460)
+        layout = QVBoxLayout(dlg)
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setHtml(_REG_CLASS_HTML)
+        layout.addWidget(view)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok)
+        btns.accepted.connect(dlg.accept)
+        layout.addWidget(btns)
+        dlg.exec()
 
     def _do_reset(self):
         self.keyword_input.clear()
@@ -338,7 +352,6 @@ class CdeTab(QWidget):
         self.drug_type_combo.setCurrentIndex(0)
         self.apply_type_combo.setCurrentIndex(0)
         self.reg_class_combo.setCurrentIndex(0)
-        self.scrape_all_checkbox.setChecked(False)
 
     # ─────────────────────────────────────────────────────────────
     # Action logic
@@ -601,3 +614,46 @@ class CdeTab(QWidget):
             webbrowser.open(detail_url)
         elif chosen == toggle_action:
             self.table.set_check_state(source_row, not is_checked)
+
+
+_REG_CLASS_HTML = """
+<h2 style="color: #3B82F6;">化学药品注册分类</h2>
+<p>基于 NMPA《药品注册管理办法》（2020年）及《化学药品注册分类及申报资料要求》</p>
+
+<h3>1类 — 创新药</h3>
+<table cellpadding="4" style="border-collapse: collapse;">
+  <tr style="background: #F1F5F9;"><td><b>分类</b></td><td><b>说明</b></td></tr>
+  <tr><td>1.1</td><td>未在国内外上市销售的化合物（全新分子实体）</td></tr>
+  <tr><td>1.2</td><td>已在国外上市销售但未在国内上市销售的化合物</td></tr>
+  <tr><td>1.3</td><td>已知活性成分的新适应症</td></tr>
+  <tr><td>1.4</td><td>已知活性成分的新剂型、新给药途径等</td></tr>
+</table>
+
+<h3>2类 — 改良型新药</h3>
+<table cellpadding="4" style="border-collapse: collapse;">
+  <tr style="background: #F1F5F9;"><td><b>分类</b></td><td><b>说明</b></td></tr>
+  <tr><td>2.1</td><td>已知活性成分的新适应症</td></tr>
+  <tr><td>2.2</td><td>已知活性成分的新剂型（含新给药途径）、新处方工艺等</td></tr>
+  <tr><td>2.3</td><td>已知活性成分的新复方制剂</td></tr>
+  <tr><td>2.4</td><td>已知活性成分的新规格</td></tr>
+</table>
+
+<h3>3类 — 仿制药</h3>
+<table cellpadding="4" style="border-collapse: collapse;">
+  <tr style="background: #F1F5F9;"><td><b>分类</b></td><td><b>说明</b></td></tr>
+  <tr><td>3.1</td><td>仿制境外已上市境内未上市原研药品（首仿）</td></tr>
+  <tr><td>3.2</td><td>仿制境内已上市原研药品</td></tr>
+  <tr><td>3.3</td><td>仿制境外已上市境内未上市非原研药品</td></tr>
+  <tr><td>3.4</td><td>仿制境内已上市非原研药品</td></tr>
+</table>
+
+<h3>5类 — 进口药品</h3>
+<table cellpadding="4" style="border-collapse: collapse;">
+  <tr style="background: #F1F5F9;"><td><b>分类</b></td><td><b>说明</b></td></tr>
+  <tr><td>5.1</td><td>进口创新药</td></tr>
+  <tr><td>5.1.1</td><td>进口原研药</td></tr>
+</table>
+
+<hr>
+<p style="color: #64748B; font-size: 9pt;">4类在旧版分类中使用，新版已合并至3类。中药、生物制品有独立分类体系。</p>
+"""
