@@ -90,20 +90,50 @@ class FdaPdfDownloader(QObject):
     def download(self, docs: List[dict], save_dir: str):
         """Start downloading PDFs sequentially.
 
+        Pre-scans save_dir for existing files and skips them immediately,
+        avoiding the per-file 8-15s download delay for already-downloaded docs.
+
         Args:
             docs: List of row dicts (must have doc_url, brand_name, etc.)
             save_dir: Target directory for downloads
         """
         os.makedirs(save_dir, exist_ok=True)
 
-        self._queue = list(docs)
+        # Pre-scan: separate already-existing files from download queue
+        to_download = []
+        skipped = []
+        for doc in docs:
+            filename = _make_download_filename(
+                brand_name=doc.get("brand_name", ""),
+                submission_type=doc.get("submission_type", ""),
+                date=doc.get("submission_status_date", ""),
+                doc_type=doc.get("doc_type", ""),
+            )
+            filepath = os.path.join(save_dir, filename)
+            if os.path.exists(filepath):
+                skipped.append(filepath)
+            else:
+                to_download.append(doc)
+
+        self._queue = to_download
         self._save_dir = save_dir
-        self._results = {"success": [], "failed": [], "skipped": []}
-        self._total = len(docs)
+        self._results = {"success": [], "failed": [], "skipped": skipped}
+        self._total = len(to_download)
         self._current_idx = 0
         self._current_retry = 0
         self._consecutive_failures = 0
         self._cancelled = False
+
+        if skipped:
+            logger.info(
+                "FDA下载预扫描: 跳过 %d 个已存在文件，需下载 %d 个",
+                len(skipped), len(to_download),
+            )
+
+        if not to_download:
+            logger.info("FDA下载: 所有文件已存在，无需下载")
+            self.download_complete.emit(self._results)
+            return
 
         logger.info(
             "开始下载FDA审评文档: %d 个文件, 保存到 %s",
@@ -155,13 +185,6 @@ class FdaPdfDownloader(QObject):
         )
 
         filepath = os.path.join(self._save_dir, self._current_filename)
-
-        # Skip if file already exists on disk
-        if os.path.exists(filepath):
-            logger.info("文件已存在，跳过: %s", self._current_filename)
-            self._results["skipped"].append(filepath)
-            self._advance()
-            return
 
         # Clean up previous page
         if self._page:

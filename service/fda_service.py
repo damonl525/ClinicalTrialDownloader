@@ -504,6 +504,8 @@ class FdaSearchService:
     ) -> dict:
         """Download review documents.
 
+        Pre-scans save_dir for existing files and skips them immediately.
+
         Args:
             docs: List of row dicts (must have doc_url, brand_name, etc.)
             save_dir: Target directory (flat, no subdirectories)
@@ -523,11 +525,33 @@ class FdaSearchService:
             except OSError:
                 pass
 
-        success = []
-        failed = []
-        total = len(docs)
+        # Pre-scan: separate already-existing files from download queue
+        to_download = []
+        skipped = []
+        for doc in docs:
+            filename = _make_download_filename(
+                brand_name=doc.get("brand_name", ""),
+                submission_type=doc.get("submission_type", ""),
+                date=doc.get("submission_status_date", ""),
+                doc_type=doc.get("doc_type", ""),
+            )
+            filepath = os.path.join(save_dir, filename)
+            if os.path.exists(filepath):
+                skipped.append(filepath)
+            else:
+                to_download.append(doc)
 
-        for i, doc in enumerate(docs):
+        success = list(skipped)
+        failed = []
+        total = len(to_download)
+
+        if skipped:
+            logger.info(
+                "FDA下载预扫描: 跳过 %d 个已存在文件，需下载 %d 个",
+                len(skipped), total,
+            )
+
+        for i, doc in enumerate(to_download):
             if is_cancelled and is_cancelled():
                 break
 
@@ -559,15 +583,14 @@ class FdaSearchService:
                 filepath = f"{base}({n}){ext}"
 
             try:
-                if not os.path.exists(filepath):
-                    self._rate_limit()
-                    resp = self._session.get(url, timeout=120, stream=True)
-                    resp.raise_for_status()
-                    tmp_path = filepath + ".tmp"
-                    with open(tmp_path, "wb") as f:
-                        for chunk in resp.iter_content(chunk_size=8192):
-                            f.write(chunk)
-                    os.replace(tmp_path, filepath)
+                self._rate_limit()
+                resp = self._session.get(url, timeout=120, stream=True)
+                resp.raise_for_status()
+                tmp_path = filepath + ".tmp"
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                os.replace(tmp_path, filepath)
 
                 success.append(filepath)
             except Exception as e:

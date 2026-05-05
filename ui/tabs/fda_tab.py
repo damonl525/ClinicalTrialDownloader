@@ -69,6 +69,8 @@ class FdaTab(QWidget):
         self._display_page = 0
         self._downloader = None
         self._toc_cache = {}  # toc_url -> TocPageData | None
+        self._checked_urls: set[str] = set()  # cross-page checkbox state
+        self._suppress_check_sync = False  # prevent circular signal
         self._cancel_search = False
 
         layout = QVBoxLayout(self)
@@ -88,6 +90,9 @@ class FdaTab(QWidget):
 
         # Right-click context menu on table
         self.table.context_menu_requested.connect(self._on_table_context_menu)
+
+        # Update page label when column filters change
+        self.table.filters_changed.connect(self._update_page_label)
 
     # ================================================================
     # Search area
@@ -219,17 +224,17 @@ class FdaTab(QWidget):
         action_row.setSpacing(SPACING["sm"])
 
         self.select_all_btn = QPushButton("全选")
-        self.select_all_btn.clicked.connect(self.table.check_all)
+        self.select_all_btn.clicked.connect(self._select_all)
         action_row.addWidget(self.select_all_btn)
 
         self.unselect_all_btn = QPushButton("取消全选")
-        self.unselect_all_btn.clicked.connect(self.table.uncheck_all)
+        self.unselect_all_btn.clicked.connect(self._deselect_all)
         action_row.addWidget(self.unselect_all_btn)
 
         self.selected_label = QLabel("已选 0 条")
         self.selected_label.setStyleSheet("color: #64748B;")
         action_row.addWidget(self.selected_label)
-        self.table.checked_changed.connect(self._update_selected_count)
+        self.table.checked_changed.connect(self._on_check_changed)
 
         action_row.addStretch()
 
@@ -305,6 +310,7 @@ class FdaTab(QWidget):
         if params != self._current_params:
             self._toc_cache.clear()
         self._current_params = params
+        self._checked_urls.clear()
         self._cancel_search = False
         self.search_btn.setEnabled(False)
         self.result_label.setText("正在获取FDA数据...")
@@ -456,6 +462,34 @@ class FdaTab(QWidget):
         self._show_page(clear_filters=True)
         return len(rows)
 
+    def _on_check_changed(self):
+        """Sync current page checkbox state to _checked_urls."""
+        if self._suppress_check_sync:
+            return
+        offset = self._display_page * self._PAGE_SIZE
+        page = self._all_rows[offset:offset + self._PAGE_SIZE]
+        checked = set(self.table.checked_rows())
+        for i in range(len(page)):
+            url = page[i].get("doc_url", "")
+            if not url:
+                continue
+            if i in checked:
+                self._checked_urls.add(url)
+            else:
+                self._checked_urls.discard(url)
+        self._update_selected_count()
+
+    def _restore_page_checks(self):
+        """Restore checkbox state on current page from _checked_urls."""
+        self._suppress_check_sync = True
+        offset = self._display_page * self._PAGE_SIZE
+        page = self._all_rows[offset:offset + self._PAGE_SIZE]
+        for i, row in enumerate(page):
+            url = row.get("doc_url", "")
+            if url in self._checked_urls:
+                self.table.set_check_state(i, True)
+        self._suppress_check_sync = False
+
     def _show_page(self, clear_filters: bool = False):
         """Render current page of results in table."""
         total = len(self._all_rows)
@@ -490,6 +524,32 @@ class FdaTab(QWidget):
 
     # -- Client-side pagination --
 
+    # Mapping from data column index to _all_rows dict key
+    _COL_KEYS = [
+        "brand_name", "generic_name", "application_number",
+        "manufacturer_name", "submission_type", "submission_status_date",
+        "doc_type",
+    ]
+
+    def _get_filtered_urls(self) -> set[str]:
+        """Get doc_urls from _all_rows matching current column filters."""
+        filters = self.table._proxy_model._column_filters
+        if not filters:
+            return {r["doc_url"] for r in self._all_rows if r.get("doc_url")}
+        urls = set()
+        for row in self._all_rows:
+            for proxy_col, allowed in filters.items():
+                data_col = proxy_col - 1
+                if data_col < 0 or data_col >= len(self._COL_KEYS):
+                    continue
+                if str(row.get(self._COL_KEYS[data_col], "")) not in allowed:
+                    break
+            else:
+                url = row.get("doc_url")
+                if url:
+                    urls.add(url)
+        return urls
+
     def _update_page_label(self):
         total = len(self._all_rows)
         if total == 0:
@@ -497,25 +557,31 @@ class FdaTab(QWidget):
             self.prev_btn.setEnabled(False)
             self.next_btn.setEnabled(False)
             return
+        filtered = len(self._get_filtered_urls())
         start = self._display_page * self._PAGE_SIZE + 1
         end = min(start + self._PAGE_SIZE - 1, total)
-        self.page_label.setText(f"第 {start}-{end} 条，共 {total} 条")
+        if filtered < total:
+            self.page_label.setText(
+                f"第 {start}-{end} 条 / 筛选 {filtered} 条，共 {total} 条"
+            )
+        else:
+            self.page_label.setText(f"第 {start}-{end} 条，共 {total} 条")
         total_pages = (total + self._PAGE_SIZE - 1) // self._PAGE_SIZE
         self.prev_btn.setEnabled(self._display_page > 0)
         self.next_btn.setEnabled(self._display_page < total_pages - 1)
 
     def _prev_page(self):
         if self._display_page > 0:
-            self.table.uncheck_all()
             self._display_page -= 1
             self._show_page()
+            self._restore_page_checks()
 
     def _next_page(self):
         total_pages = (len(self._all_rows) + self._PAGE_SIZE - 1) // self._PAGE_SIZE
         if self._display_page < total_pages - 1:
-            self.table.uncheck_all()
             self._display_page += 1
             self._show_page()
+            self._restore_page_checks()
 
     # -- Reset --
 
@@ -535,22 +601,29 @@ class FdaTab(QWidget):
     # ================================================================
 
     def _update_selected_count(self):
-        count = len(self.table.checked_rows())
+        count = len(self._checked_urls)
         self.selected_label.setText(f"已选 {count} 条")
         self.download_btn.setEnabled(count > 0)
 
+    def _select_all(self):
+        """Select all rows matching current column filters, across all pages."""
+        self._checked_urls = self._get_filtered_urls()
+        self._restore_page_checks()
+        self._update_selected_count()
+        self._update_page_label()
+
+    def _deselect_all(self):
+        """Clear all selections across all pages."""
+        self._checked_urls.clear()
+        self.table.uncheck_all()
+        self._update_selected_count()
+
     def _open_in_browser(self):
         """Open selected document URLs in browser tabs."""
-        checked = self.table.checked_rows()
-        if not checked:
+        if not self._checked_urls:
             return
 
-        offset = self._display_page * self._PAGE_SIZE
-        docs = [
-            self._all_rows[offset + i]
-            for i in checked
-            if offset + i < len(self._all_rows)
-        ]
+        docs = [r for r in self._all_rows if r.get("doc_url") in self._checked_urls]
         urls = [d.get("doc_url", "") for d in docs if d.get("doc_url")]
         if not urls:
             QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
@@ -588,17 +661,10 @@ class FdaTab(QWidget):
 
     def _do_download(self):
         """Start downloading selected documents."""
-        checked = self.table.checked_rows()
-        if not checked:
+        if not self._checked_urls:
             return
 
-        offset = self._display_page * self._PAGE_SIZE
-        docs = [
-            self._all_rows[offset + i]
-            for i in checked
-            if offset + i < len(self._all_rows)
-        ]
-        docs = [d for d in docs if d.get("doc_url", "")]
+        docs = [r for r in self._all_rows if r.get("doc_url") in self._checked_urls]
         if not docs:
             QMessageBox.information(self, "提示", "选中的文档没有可用的链接")
             return
@@ -623,10 +689,35 @@ class FdaTab(QWidget):
         self.download_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
 
-        self.download_progress.start(len(docs))
+        # Count existing files for pre-scan info
+        existing = 0
+        if os.path.isdir(save_dir):
+            from service.fda_service import _make_download_filename
+            for doc in docs:
+                fp = os.path.join(
+                    save_dir,
+                    _make_download_filename(
+                        brand_name=doc.get("brand_name", ""),
+                        submission_type=doc.get("submission_type", ""),
+                        date=doc.get("submission_status_date", ""),
+                        doc_type=doc.get("doc_type", ""),
+                    ),
+                )
+                if os.path.exists(fp):
+                    existing += 1
+
+        to_download = len(docs) - existing
+        self.download_progress.start(to_download or len(docs))
         self.download_progress.set_cancel_enabled(True)
         self.download_progress.cancelled.connect(self._cancel_download)
         self._download_start_time = None
+
+        if existing:
+            self.result_label.setText(
+                f"预扫描: {existing} 个已存在，正在下载 {to_download} 个文件..."
+            )
+        else:
+            self.result_label.setText(f"正在下载 {len(docs)} 个文件...")
 
         import time
         self._download_start_time = time.time()
@@ -637,7 +728,9 @@ class FdaTab(QWidget):
             self._downloader.download_progress.connect(self._on_download_progress)
             self._downloader.download_complete.connect(self._download_complete.emit)
             self._downloader.download(docs, save_dir)
-            logger.info("开始下载FDA审评文档: %d 个文件", len(docs))
+            logger.info("开始下载FDA审评文档: %d 个文件 (%d 已跳过)", len(docs), existing)
+        except ImportError:
+            logger.warning("PySide6-WebEngineWidgets 不可用，无法下载")
         except ImportError:
             logger.warning("PySide6-WebEngineWidgets 不可用，无法下载")
             self.download_btn.setEnabled(True)
@@ -726,7 +819,8 @@ class FdaTab(QWidget):
 
     def _on_table_context_menu(self, source_row: int, global_pos):
         """Show context menu for right-clicked row."""
-        idx = self._display_page * self._PAGE_SIZE + source_row
+        offset = self._display_page * self._PAGE_SIZE
+        idx = offset + source_row
         if idx >= len(self._all_rows):
             return
 
@@ -740,7 +834,7 @@ class FdaTab(QWidget):
         open_action.setEnabled(bool(url))
 
         # Check/uncheck row
-        is_checked = source_row in self.table.checked_rows()
+        is_checked = url in self._checked_urls
         toggle_text = "取消勾选" if is_checked else "勾选此行"
         toggle_action = menu.addAction(toggle_text)
 

@@ -107,6 +107,7 @@ class FilterTableView(QTableView):
     """QTableView with header filter dropdowns and checkbox selection."""
 
     checked_changed = Signal()
+    filters_changed = Signal()
     context_menu_requested = Signal(int, QPoint)  # source_row, global_pos
 
     def __init__(self, parent=None):
@@ -284,6 +285,7 @@ class FilterTableView(QTableView):
             else:
                 cur[logical_index] = allowed
             self._proxy_model.set_column_filters(cur)
+            self.filters_changed.emit()
 
         for _, action in val_actions:
             action.toggled.connect(lambda checked, _f=_apply_filter: _f())

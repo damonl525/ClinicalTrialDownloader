@@ -113,21 +113,50 @@ class CdePdfDownloader(QObject):
     def download(self, docs: List[dict], save_dir: str):
         """Start downloading PDFs sequentially.
 
+        Pre-scans save_dir for existing files and skips them immediately,
+        avoiding the per-file delay for already-downloaded docs.
+
         Args:
             docs: List of row dicts with keys: url, drug_name, accept_id, doc_type
             save_dir: Target directory for downloads
         """
         os.makedirs(save_dir, exist_ok=True)
 
-        self._queue = list(docs)
+        # Pre-scan: separate already-existing files from download queue
+        to_download = []
+        skipped = []
+        for doc in docs:
+            filename = _make_download_filename(
+                drug_name=doc.get("drug_name", ""),
+                accept_id=doc.get("accept_id", ""),
+                doc_type=doc.get("doc_type", ""),
+            )
+            filepath = os.path.join(save_dir, filename)
+            if os.path.exists(filepath):
+                skipped.append(filepath)
+            else:
+                to_download.append(doc)
+
+        self._queue = to_download
         self._save_dir = save_dir
-        self._results = {"success": [], "failed": [], "skipped": []}
-        self._total = len(docs)
+        self._results = {"success": [], "failed": [], "skipped": skipped}
+        self._total = len(to_download)
         self._current_idx = 0
         self._current_retry = 0
         self._consecutive_failures = 0
         self._cancelled = False
         self._active_downloads = {}
+
+        if skipped:
+            logger.info(
+                "CDE下载预扫描: 跳过 %d 个已存在文件，需下载 %d 个",
+                len(skipped), len(to_download),
+            )
+
+        if not to_download:
+            logger.info("CDE下载: 所有文件已存在，无需下载")
+            self.download_complete.emit(self._results)
+            return
 
         # Create a single reusable page
         if self._page:
@@ -181,13 +210,6 @@ class CdePdfDownloader(QObject):
         )
 
         filepath = os.path.join(self._save_dir, self._current_filename)
-
-        # Skip if file already exists on disk
-        if os.path.exists(filepath):
-            logger.info("文件已存在，跳过: %s", self._current_filename)
-            self._results["skipped"].append(filepath)
-            self._advance()
-            return
 
         # Reset timeout timer
         if self._timeout_timer:
