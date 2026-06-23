@@ -166,6 +166,7 @@ def run_r_streaming(
     tmp_r = tempfile.NamedTemporaryFile(
         mode="w", suffix=".R", delete=False, encoding="utf-8"
     )
+    proc = None  # Popen 失败时 finally 引用未绑定 proc 会 UnboundLocalError 掩盖原异常
     try:
         tmp_r.write(wrapped)
         tmp_r.close()

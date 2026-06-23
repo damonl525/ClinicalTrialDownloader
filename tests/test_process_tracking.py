@@ -59,3 +59,27 @@ def test_cancel_survives_kill_exception():
 
     p2.kill.assert_called_once()  # p2 仍被 kill
     assert b._current_processes == []
+
+
+def test_run_r_streaming_popen_failure_does_not_mask_with_nameerror(monkeypatch):
+    """Popen 失败时 finally 不应 NameError 掩盖原始异常（proc=None 初始化回归保护）。
+
+    finally 块引用 proc；若 Popen 失败导致 proc 未定义，remove(proc) 抛
+    NameError 会覆盖真实 OSError。proc=None 初始化让 remove(None)→ValueError
+    被捕获，原始异常正常传播。
+    """
+    import pytest
+    from ctrdata import process as proc_mod
+
+    def boom(*args, **kwargs):
+        raise OSError("popen failed")
+
+    monkeypatch.setattr(proc_mod.subprocess, "Popen", boom)
+
+    bridge = MagicMock()
+    bridge._current_processes = []
+    bridge._current_process = None
+    bridge.rscript = "/fake/Rscript"
+
+    with pytest.raises(OSError, match="popen failed"):
+        proc_mod.run_r_streaming(bridge, "cat(1)")
