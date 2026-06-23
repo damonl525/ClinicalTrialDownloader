@@ -178,7 +178,7 @@ class TestMakeFilename(unittest.TestCase):
             date="20200615",
             doc_type="Medical Review(s)",
         )
-        self.assertEqual(name, "Keytruda_ORIG-1_20200615_医学审评.pdf")
+        self.assertEqual(name, "Keytruda_ORIG-1_20200615_Medical_Review(s).pdf")
 
     def test_fallback_to_generic_name(self):
         from service.fda_service import _make_download_filename
@@ -189,7 +189,7 @@ class TestMakeFilename(unittest.TestCase):
             doc_type="Statistical Review(s)",
         )
         # When no brand_name, doc_type Chinese name is used as fallback prefix
-        self.assertTrue(name.startswith("统计审评"))
+        self.assertTrue(name.startswith("Statistical_Review(s)"))
 
 
 if __name__ == "__main__":
