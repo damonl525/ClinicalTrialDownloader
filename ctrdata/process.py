@@ -129,8 +129,6 @@ def run_r(
 
 def run_r_json(bridge, r_code: str, timeout: int = 600) -> Any:
     """Execute R code and parse JSON result."""
-    import json as _json
-
     proc = run_r(bridge, r_code, timeout)
 
     output = proc.stdout.strip()
