@@ -106,6 +106,39 @@ def _trial_has_docs(documents_path: str, trial_id: str) -> bool:
     return False
 
 
+def _cleanup_trial_partial_docs(documents_path: str, trial_id: str) -> int:
+    """Remove partial documents for a trial so it can be fully re-downloaded.
+
+    Interrupted downloads (timeout/cancel) may leave truncated files that ctrdata
+    will skip on re-download (it does not overwrite existing files). Deleting them
+    forces a clean re-download. Removes both the trial_id/ subdirectory and
+    flattened trial_id_* files. Returns the number of files removed.
+    """
+    removed = 0
+    trial_dir = os.path.join(documents_path, trial_id)
+    if os.path.isdir(trial_dir):
+        for fname in os.listdir(trial_dir):
+            try:
+                os.unlink(os.path.join(trial_dir, fname))
+                removed += 1
+            except OSError:
+                pass
+        try:
+            os.rmdir(trial_dir)
+        except OSError:
+            pass
+    if os.path.isdir(documents_path):
+        prefix = f"{trial_id}_"
+        for fname in os.listdir(documents_path):
+            if fname.startswith(prefix):
+                try:
+                    os.unlink(os.path.join(documents_path, fname))
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
+
+
 def _load_resume(bridge, resume_file: str) -> dict:
     """Load checkpoint data from file."""
     if not os.path.exists(resume_file):
@@ -204,6 +237,13 @@ def download_documents_for_ids(
     skipped_explicit = set(resume_data.get("skipped_explicitly", []))
     in_progress_set = set(resume_data.get("in_progress", []))
     remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
+
+    # 中断的 trial（in_progress）：重下前清理部分文件，避免 ctrdata 跳过残缺文件
+    interrupted = in_progress_set & set(remaining)
+    for tid in interrupted:
+        removed = _cleanup_trial_partial_docs(documents_path, tid)
+        if removed:
+            logger.info(f"Resume: trial {tid} 中断残留，清理 {removed} 个部分文件后重新下载")
 
     if not remaining:
         _cleanup_resume(bridge, resume_file)
