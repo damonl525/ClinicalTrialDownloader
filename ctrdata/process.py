@@ -36,6 +36,36 @@ logger = logging.getLogger(__name__)
 # R execution helpers
 # ============================================================
 
+def _extract_json_from_output(output: str, expect: str = "any") -> Optional[Any]:
+    """从 R 输出中提取最后一个 JSON 对象/数组。
+
+    从后往前扫描，找第一个以 '{' 或 '[' 开头的非空行并解析。解析失败时
+    continue（继续找前一行）而非 break，以容忍 R 打印的含 '{' 的诊断行。
+
+    Args:
+        output: R 进程的 stdout
+        expect: "object" 只找 '{'，"array" 只找 '['，"any"（默认）两者皆可
+
+    Returns:
+        解析后的 dict/list，或 None（无有效 JSON）。
+    """
+    import json as _json
+    if expect == "object":
+        prefixes = ("{",)
+    elif expect == "array":
+        prefixes = ("[",)
+    else:
+        prefixes = ("{", "[")
+    for line in reversed(output.strip().split("\n")):
+        line = line.strip()
+        if line.startswith(prefixes):
+            try:
+                return _json.loads(line)
+            except _json.JSONDecodeError:
+                continue
+    return None
+
+
 def run_r(
     bridge,
     r_code: str,
@@ -104,10 +134,9 @@ def run_r_json(bridge, r_code: str, timeout: int = 600) -> Any:
     proc = run_r(bridge, r_code, timeout)
 
     output = proc.stdout.strip()
-    for line in reversed(output.split("\n")):
-        line = line.strip()
-        if line.startswith("{") or line.startswith("["):
-            return _json.loads(line)
+    result = _extract_json_from_output(output, expect="any")
+    if result is not None:
+        return result
 
     return {"ok": True, "raw_output": output}
 
@@ -377,17 +406,9 @@ def download_one_trial_doc(
         stall_timeout=timeout,
     )
 
-    import json as _json
-
-    output = proc.stdout.strip()
-    for line in reversed(output.split("\n")):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return _json.loads(line)
-            except _json.JSONDecodeError:
-                pass
-            break
+    result = _extract_json_from_output(proc.stdout, expect="object")
+    if result is not None:
+        return result
 
     return {"ok": False, "n": 0, "error": "No output from R"}
 
@@ -423,17 +444,9 @@ def _download_euctr_trial_doc(
         stall_timeout=timeout,
     )
 
-    import json as _json
-
-    output = proc.stdout.strip()
-    for line in reversed(output.split("\n")):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return _json.loads(line)
-            except _json.JSONDecodeError:
-                pass
-            break
+    result = _extract_json_from_output(proc.stdout, expect="object")
+    if result is not None:
+        return result
 
     return {"ok": False, "n": 0, "error": "No output from R"}
 
@@ -474,17 +487,9 @@ def _download_ctis_trial_doc(
         stall_timeout=timeout,
     )
 
-    import json as _json
-
-    output = proc.stdout.strip()
-    for line in reversed(output.split("\n")):
-        line = line.strip()
-        if line.startswith("{"):
-            try:
-                return _json.loads(line)
-            except _json.JSONDecodeError:
-                pass
-            break
+    result = _extract_json_from_output(proc.stdout, expect="object")
+    if result is not None:
+        return result
 
     return {"ok": False, "n": 0, "error": "No output from R"}
 
@@ -559,16 +564,9 @@ def download_batch_docs(
         timeout=total_timeout,
     )
 
-    # Parse final JSON array from output
-    output = proc.stdout.strip()
-    for line in reversed(output.split("\n")):
-        line = line.strip()
-        if line.startswith("["):
-            try:
-                return _json.loads(line)
-            except _json.JSONDecodeError:
-                pass
-            break
+    result = _extract_json_from_output(proc.stdout, expect="array")
+    if result is not None:
+        return result
 
     return [{"ok": False, "error": "No batch results from R"}]
 
