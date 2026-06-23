@@ -15,7 +15,7 @@ import re
 import shutil
 from typing import Any, Callable, Dict, List
 
-from core.exceptions import DatabaseError, CtrdataError
+from core.exceptions import DatabaseError, CtrdataError, DownloadTimeoutError
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
 
@@ -257,6 +257,14 @@ def download_documents_for_ids(
         }
 
     total_to_process = len(remaining)
+    # P1-1: 按注册中心分流——CTGOV2 走单 session batch 省 per-trial 进程启动税
+    # （100 trial 省 ~10 分钟）。EUCTR/CTIS 需特殊参数 + 超时隔离，ISRCTN 走 HTTP，
+    # 三者保持 per-trial。batch 模板（download_batch_docs.R）用通用 queryterm，
+    # 不支持 EUCTR/CTIS 特殊参数，故 batch 只适用 CTGOV2。
+    from core.constants import classify_registry
+    ctgov2_remaining = [t for t in remaining if classify_registry(t) == "CTGOV2"]
+    other_remaining = [t for t in remaining if classify_registry(t) != "CTGOV2"]
+
     runtime_completed = []
     runtime_failed = {}
     resume_completed = list(already_done)  # For checkpoint only
@@ -275,14 +283,53 @@ def download_documents_for_ids(
             in_progress=list(runtime_in_progress),
         )
 
-    for i, tid in enumerate(remaining, 1):
+    # ── CTGOV2 batch 段：单 R session 处理所有 CTGOV2 trial（省进程税）──
+    if ctgov2_remaining and not bridge._cancelled:
+        from ctrdata.process import download_batch_docs as _batch_docs
+
+        def _ctgov2_progress(i, total, tid, status, error):
+            # i 是 batch 内 1-based 索引；CTGOV2 先跑，即全局进度索引。
+            # R 模板对每个 trial 发两条 PROGRESS：start（R line 12）+ ok/error（R line 32）。
+            # ok 但 n=0（无文档）的 trial：与 per-trial 路径（documents.py:303）一致，标记 failed。
+            if callback:
+                callback(i, total_to_process, tid, status, error)
+            if status == "start":
+                return
+            if status == "ok":
+                _flatten_trial_docs(documents_path, tid)
+                if _trial_has_docs(documents_path, tid):
+                    if tid not in runtime_completed:
+                        runtime_completed.append(tid)
+                    _save_runtime_resume()
+                else:
+                    runtime_failed[tid] = "No documents found for this trial"
+                    _save_runtime_resume()
+            elif status == "error":
+                runtime_failed[tid] = error or "unknown"
+                _save_runtime_resume()
+
+        try:
+            _batch_docs(
+                bridge, ctgov2_remaining, documents_path, documents_regexp,
+                total_timeout=timeout_total,
+                progress_callback=_ctgov2_progress,
+            )
+        except (CtrdataError, DownloadTimeoutError) as e:
+            logger.warning(f"CTGOV2 batch failed: {e}; marking unfinished as failed")
+            for tid in ctgov2_remaining:
+                if tid not in runtime_completed:
+                    runtime_failed[tid] = f"TIMEOUT({timeout_total}s) batch: {e}"
+            _save_runtime_resume()
+
+    for i, tid in enumerate(other_remaining, 1):
+        global_i = len(ctgov2_remaining) + i  # CTGOV2 batch 已占前 N 个进度位
         # Check cancel flag between trials
         if bridge._cancelled:
-            logger.info(f"Download cancelled after {i-1}/{total_to_process} trials")
+            logger.info(f"Download cancelled after {global_i-1}/{total_to_process} trials")
             break
 
         if callback:
-            callback(i, total_to_process, tid, "start", None)
+            callback(global_i, total_to_process, tid, "start", None)
 
         runtime_in_progress.add(tid)
         _save_runtime_resume()
@@ -296,24 +343,24 @@ def download_documents_for_ids(
                 if _trial_has_docs(documents_path, tid):
                     runtime_completed.append(tid)
                     if callback:
-                        callback(i, total_to_process, tid, "ok", None)
+                        callback(global_i, total_to_process, tid, "ok", None)
                         if file_skips:
-                            callback(i, total_to_process, tid, "file_skip", str(file_skips))
+                            callback(global_i, total_to_process, tid, "file_skip", str(file_skips))
                 else:
                     runtime_failed[tid] = "No documents found for this trial"
                     if callback:
-                        callback(i, total_to_process, tid, "skip", "No documents found")
+                        callback(global_i, total_to_process, tid, "skip", "No documents found")
             else:
                 err = result.get("error", "unknown")
                 runtime_failed[tid] = err
                 if callback:
-                    callback(i, total_to_process, tid, "error", err)
+                    callback(global_i, total_to_process, tid, "error", err)
 
         except CtrdataError as e:
             err_msg = f"TIMEOUT({per_trial_timeout}s): {e}"
             runtime_failed[tid] = err_msg
             if callback:
-                callback(i, total_to_process, tid, "skip", err_msg)
+                callback(global_i, total_to_process, tid, "skip", err_msg)
 
         runtime_in_progress.discard(tid)
         _save_runtime_resume()

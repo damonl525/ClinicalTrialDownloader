@@ -49,7 +49,7 @@ def test_resume_clears_partial_files_for_interrupted_trial(tmp_path, monkeypatch
     bridge.db_path = str(tmp_path / "trials.sqlite")
     bridge._cancelled = False
 
-    tid = "NCT00000001"
+    tid = "2004-000356-17-3RD"  # EUCTR：P1-1 分流后走 per-trial 路径
     # 中断残留的部分文件
     partial = os.path.join(documents_path, f"{tid}_Prot.pdf")
     with open(partial, "w") as f:
@@ -98,8 +98,8 @@ def test_download_stops_on_cancel(tmp_path, monkeypatch):
 
     monkeypatch.setattr(docs_mod, "download_one_trial_doc", fake_download)
 
-    result = download_documents_for_ids(
-        bridge, ["NCT00000001", "NCT00000002", "NCT00000003"], documents_path
-    )
+    # EUCTR trials：P1-1 分流后走 per-trial 路径（该测试验证 per-trial 循环的 trial 间 cancel）
+    euctr_ids = ["2004-000356-17-3RD", "2010-023156-12-DE", "2012-005148-21-GB"]
+    result = download_documents_for_ids(bridge, euctr_ids, documents_path)
 
-    assert calls == ["NCT00000001"]  # 只下了第一个就停
+    assert calls == [euctr_ids[0]]  # 只下了第一个就停
