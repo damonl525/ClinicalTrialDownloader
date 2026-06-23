@@ -190,6 +190,7 @@ def run_r_streaming(
             creationflags=creationflags,
         )
         bridge._current_process = proc
+        bridge._current_processes.append(proc)
 
         line_queue: queue_mod.Queue = queue_mod.Queue()
         stderr_chunks: list = []
@@ -308,6 +309,10 @@ def run_r_streaming(
         )
     finally:
         bridge._current_process = None
+        try:
+            bridge._current_processes.remove(proc)
+        except (ValueError, AttributeError):
+            pass
         try:
             os.unlink(tmp_r.name)
         except Exception:

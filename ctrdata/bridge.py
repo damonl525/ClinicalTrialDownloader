@@ -40,7 +40,8 @@ class CtrdataBridge:
 
         self.db_path: Optional[str] = None
         self.collection: str = DEFAULT_COLLECTION
-        self._current_process = None  # Current R process (supports cancel)
+        self._current_process = None  # 最近一个 R 进程（向后兼容）
+        self._current_processes: list = []  # 所有活动进程（支持并发 cancel）
         self._cancelled = False
 
         _proc.cleanup_temp_files()
@@ -50,15 +51,17 @@ class CtrdataBridge:
     # ============================================================
 
     def cancel(self):
-        """取消当前正在运行的 R 进程"""
+        """取消所有正在运行的 R 进程（支持并发下载）"""
         self._cancelled = True
-        if self._current_process is not None:
+        # kill 全部活动进程，不只最近一个
+        for proc in list(self._current_processes):
             try:
-                self._current_process.kill()
-                self._current_process.wait(timeout=5)
+                proc.kill()
+                proc.wait(timeout=5)
             except Exception:
                 pass
-            self._current_process = None
+        self._current_processes.clear()
+        self._current_process = None
 
     def clear_cancel(self):
         """Reset cancel flag (called before starting new operations)."""
