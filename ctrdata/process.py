@@ -165,6 +165,7 @@ def run_r_streaming(
         bridge._current_process = proc
 
         line_queue: queue_mod.Queue = queue_mod.Queue()
+        stderr_chunks: list = []
 
         def _stdout_reader():
             try:
@@ -173,8 +174,22 @@ def run_r_streaming(
             finally:
                 line_queue.put(None)
 
+        def _stderr_reader():
+            """持续消费 stderr，防止管道写满导致 R 进程死锁。
+
+            ctrdata 用 message() 输出进度到 stderr；若不消费，超 64KB 后
+            R 的 write 阻塞 → R 永久挂起 → stdout reader 收不到 EOF。
+            """
+            try:
+                for raw_line in proc.stderr:
+                    stderr_chunks.append(raw_line)
+            except Exception:
+                pass
+
         reader = threading.Thread(target=_stdout_reader, daemon=True)
+        err_reader = threading.Thread(target=_stderr_reader, daemon=True)
         reader.start()
+        err_reader.start()
 
         stdout_lines = []
         start = time.time()
@@ -252,9 +267,11 @@ def run_r_streaming(
                         )
 
         proc.wait(timeout=10)
+        # 等 stderr reader 消费完（proc 退出后 stderr EOF，线程自然结束）
+        err_reader.join(timeout=5)
         stdout = "\n".join(stdout_lines)
         from ctrdata.process_env import _translate_r_error
-        stderr = _translate_r_error(proc.stderr.read())
+        stderr = _translate_r_error("".join(stderr_chunks))
 
         return subprocess.CompletedProcess(
             args=proc.args,
