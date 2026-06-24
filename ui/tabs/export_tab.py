@@ -664,51 +664,24 @@ class ExportTab(QWidget):
 
         def _worker():
             try:
+                svc = ExtractService(self.app.bridge)
                 effective_scope = scope_ids
-                # Protocol pre-filter with multi-registry support
+                # Protocol pre-filter with multi-registry support (P1-8: logic
+                # lives in ExtractService.resolve_protocol_scope)
                 if protocol_filter:
                     self._log_signal.emit("info", "Protocol 预过滤: 查询数据库...")
-                    protocol_ids = self.app.bridge.get_protocol_trial_ids(scope_ids)
-
-                    if scope_ids is not None:
-                        # Scoped mode: scope_ids is the boundary
-                        if scope_choice == "ctgov_isrctn_only":
-                            # protocol_ids already only contains CTGOV2/ISRCTN
-                            effective_scope = protocol_ids
-                        else:  # "all_registries"
-                            euctr_ctis_ids = [
-                                sid for sid in scope_ids
-                                if classify_registry(sid) in ("EUCTR", "CTIS")
-                            ]
-                            effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
-                            self._log_signal.emit("info",
-                                f"Protocol scope breakdown: {len(protocol_ids)} CTGOV2+ISRCTN, "
-                                f"{len(euctr_ctis_ids)} EUCTR/CTIS, "
-                                f"{len(effective_scope)} total"
-                            )
-                    else:
-                        # Full-database mode
-                        if scope_choice == "ctgov_isrctn_only":
-                            effective_scope = protocol_ids
-                        else:  # "all_registries"
-                            all_db_ids = self.app.bridge.get_all_trial_ids()
-                            if not all_db_ids:
-                                self._log_signal.emit("warning", "获取全部试验ID失败，仅使用Protocol查询结果")
-                            euctr_ctis_ids = [
-                                tid for tid in all_db_ids
-                                if classify_registry(tid) in ("EUCTR", "CTIS")
-                            ]
-                            effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
-
-                    before = len(scope_ids) if scope_ids else int(getattr(self.app, 'db_total_records', 0))
-                    self._log_signal.emit("info",
+                    effective_scope = svc.resolve_protocol_scope(
+                        scope_ids, scope_choice, self._log_signal.emit
+                    )
+                    self._log_signal.emit(
+                        "info",
                         f"Protocol过滤: {len(effective_scope)} 条 "
-                        f"({'CTGOV2+ISRCTN精确' if scope_choice == 'ctgov_isrctn_only' else '含CTIS/EUCTR全部'})")
+                        f"({'CTGOV2+ISRCTN精确' if scope_choice == 'ctgov_isrctn_only' else '含CTIS/EUCTR全部'})"
+                    )
                     if not effective_scope:
                         self._extract_complete.emit(pd.DataFrame())
                         return
 
-                svc = ExtractService(self.app.bridge)
                 df = svc.extract(
                     fields=selected_fields if selected_fields else None,
                     concepts=selected_concepts if selected_concepts else None,
