@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from service._silent_page import SilentPage as _SilentPage
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,6 @@ _API_PATH = "/main/xxgk/getPostMarketList"
 _PAGE_SIZE = 10
 _POLL_INTERVAL_MS = 200   # polling interval for async XHR result
 _MAX_POLL_ATTEMPTS = 30   # 30 * 200ms = 6s max wait
-
-
-class _SilentPage(QWebEnginePage):
-    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
-
-    def javaScriptConsoleMessage(self, level, message, line, sourceId):
-        logger.debug("JS [%s:%d] %s", sourceId, line, message)
 
 
 class CdeListScraper(QObject):

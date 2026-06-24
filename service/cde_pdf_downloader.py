@@ -25,6 +25,8 @@ from PySide6.QtWebEngineCore import (
     QWebEngineSettings,
 )
 
+from service._silent_page import SilentPage as _SilentPage
+
 logger = logging.getLogger(__name__)
 
 from core.constants import (
@@ -60,13 +62,6 @@ def _make_download_filename(drug_name: str, accept_id: str, doc_type: str) -> st
 
     prefix = sanitize(drug_name) if drug_name else sanitize(doc_type)
     return f"{prefix}_{accept_id}_{doc_type}.pdf"
-
-
-class _SilentPage(QWebEnginePage):
-    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
-
-    def javaScriptConsoleMessage(self, level, message, line, sourceId):
-        logger.debug("JS [%s:%d] %s", sourceId, line, message)
 
 
 class CdePdfDownloader(QObject):

@@ -25,6 +25,7 @@ from PySide6.QtWebEngineCore import (
 )
 
 from service.fda_service import _make_download_filename
+from service._silent_page import SilentPage as _SilentPage
 
 logger = logging.getLogger(__name__)
 
@@ -40,13 +41,6 @@ _COOLDOWN_DELAY = 60000  # 60 seconds
 
 # Max consecutive failures before triggering cooldown
 _MAX_CONSECUTIVE_FAILURES = 2
-
-
-class _SilentPage(QWebEnginePage):
-    """QWebEnginePage that suppresses JavaScript console messages from stderr."""
-
-    def javaScriptConsoleMessage(self, level, message, line, sourceId):
-        logger.debug("JS [%s:%d] %s", sourceId, line, message)
 
 
 class FdaPdfDownloader(QObject):
