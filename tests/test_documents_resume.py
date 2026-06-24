@@ -133,3 +133,58 @@ def test_find_resume_files_empty_when_none(tmp_path):
 
     db_path = str(tmp_path / "trials.sqlite")
     assert _find_resume_files_for_db(db_path) == []
+
+
+def test_get_resume_file_path_uses_db_basename_and_path_slug(tmp_path):
+    """resume 文件路径格式: {db_dir}/{db_basename}_{8-hex path_slug}_doc_resume.json。
+
+    path_slug = md5(abspath(documents_path))[:8]，使不同下载目录的 checkpoint 互不干扰，
+    且文件与数据库同目录（便于删库时清理孤儿 checkpoint）。
+    """
+    from ctrdata.documents import _get_resume_file
+
+    bridge = MagicMock()
+    bridge.db_path = str(tmp_path / "trials.sqlite")
+    documents_path = str(tmp_path / "downloads")
+
+    resume_file = _get_resume_file(bridge, documents_path)
+
+    normalized = resume_file.replace("\\", "/")
+    base = os.path.basename(resume_file)
+    assert base.startswith("trials_"), f"应以 db basename 开头: {base!r}"
+    assert base.endswith("_doc_resume.json"), f"应以 _doc_resume.json 结尾: {base!r}"
+    slug = base[len("trials_"):-len("_doc_resume.json")]
+    assert len(slug) == 8, f"path_slug 应为 8 字符 md5，实际: {slug!r}"
+    # 文件落在数据库所在目录
+    assert str(tmp_path).replace("\\", "/") in normalized
+
+
+def test_download_creates_documents_path_if_missing(tmp_path, monkeypatch):
+    """documents_path 不存在时，download 自动创建目录（Bug3: 不再因目录缺失崩溃）。
+
+    Bug3 的真实行为：download_documents_for_ids 内部 os.makedirs(documents_path,
+    exist_ok=True)，目录缺失时自动创建而非报错。此前仅由字符串匹配间接覆盖，
+    现改为显式行为测试。
+    """
+    from ctrdata import documents as docs_mod
+    from ctrdata.documents import download_documents_for_ids
+
+    documents_path = str(tmp_path / "new_downloads")  # 故意不预先创建
+    assert not os.path.exists(documents_path)
+
+    bridge = MagicMock()
+    bridge.db_path = str(tmp_path / "trials.sqlite")
+    bridge._cancelled = False
+
+    def fake_download(b, t, dp, regexp, timeout):
+        with open(os.path.join(dp, f"{t}_Prot.pdf"), "w") as f:
+            f.write("complete")
+        return {"ok": True, "n": 1}
+
+    monkeypatch.setattr(docs_mod, "download_one_trial_doc", fake_download)
+
+    tid = "2004-000356-17-3RD"  # EUCTR: P1-1 分流后走 per-trial 路径
+    result = download_documents_for_ids(bridge, [tid], documents_path)
+
+    assert os.path.isdir(documents_path), "目录不存在时应自动创建"
+    assert result["success"] == [tid]
