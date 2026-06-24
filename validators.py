@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+# LEGACY: not wired into PySide6 main app flow. Used by legacy tkinter GUI only.
 输入验证工具模块
 
 提供各种输入验证功能

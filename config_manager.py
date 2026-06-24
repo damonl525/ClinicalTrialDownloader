@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-# LEGACY: not wired into PySide6 main app flow. Used by legacy tkinter GUI only.
+# LEGACY (P2-1): not wired into PySide6 main app flow — PySide6 uses QSettings instead.
+# Used by legacy tkinter GUI only (--ui legacy). Do not add new dependencies on this module.
 配置管理和验证模块
 
 提供配置加载、保存和验证功能

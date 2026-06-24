@@ -372,12 +372,12 @@ def extract_to_dataframe(
             # Post-download filtering: phase / status
             _n = len(df)
             if filter_phase and ".trialPhase" in df.columns:
-                df = df[df[".trialPhase"].astype(str).str.contains(filter_phase, case=False, na=False)]
+                df = df[df[".trialPhase"].astype(str).str.contains(filter_phase, case=False, na=False, regex=False)]
                 if len(df) != _n:
                     logger.info(f"Filter phase '{filter_phase}': {_n} → {len(df)} rows")
                     _n = len(df)
             if filter_status and ".statusRecruitment" in df.columns:
-                df = df[df[".statusRecruitment"].astype(str).str.contains(filter_status, case=False, na=False)]
+                df = df[df[".statusRecruitment"].astype(str).str.contains(filter_status, case=False, na=False, regex=False)]
                 if len(df) != _n:
                     logger.info(f"Filter status '{filter_status}': {_n} → {len(df)} rows")
                     _n = len(df)

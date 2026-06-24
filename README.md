@@ -15,7 +15,7 @@ Desktop GUI for searching, downloading, and exporting clinical trial data from i
 - ISRCTN
 - EU CTIS
 
-### Four-Tab Workflow
+### Five-Tab Workflow
 1. **Database** -- Connect to SQLite, view query history, incremental updates
 2. **Search & Download** -- Multi-condition search, paste URL, or download by trial ID; multi-register search with result count preview
 3. **Extract & Export** -- Field extraction with concept functions, multi-dimensional filtering, CSV export, document download
