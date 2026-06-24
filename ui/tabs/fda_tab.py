@@ -38,6 +38,7 @@ from ui.app import get_settings, get_recent_db
 from core.constants import (
     DEFAULT_DB_NAME,
     FDA_APPLICATION_TYPES,
+    FDA_LARGE_RESULT_THRESHOLD,
     FDA_SEARCH_ROUTES,
     FDA_REVIEW_PRIORITIES,
     FDA_SUBMISSION_CLASSES,
@@ -72,6 +73,7 @@ class FdaTab(QWidget):
         self._checked_urls: set[str] = set()  # cross-page checkbox state
         self._suppress_check_sync = False  # prevent circular signal
         self._cancel_search = False
+        self._large_result_prompted = False  # P1-11: 大结果集预警仅提示一次
 
         layout = QVBoxLayout(self)
         layout.setSpacing(SPACING["md"])
@@ -312,6 +314,7 @@ class FdaTab(QWidget):
         self._current_params = params
         self._checked_urls.clear()
         self._cancel_search = False
+        self._large_result_prompted = False
         self.search_btn.setEnabled(False)
         self.result_label.setText("正在获取FDA数据...")
         logger.info("FDA搜索请求: %s", params.get("drug_name", ""))
@@ -334,6 +337,26 @@ class FdaTab(QWidget):
         threading.Thread(target=_worker, daemon=True).start()
 
     def _on_search_progress(self, page, total_pages, doc_count):
+        # P1-11: page 1 即知 total_pages，超阈值时一次性提示用户缩小范围
+        pages_threshold = (FDA_LARGE_RESULT_THRESHOLD + 99) // 100  # 2000 条 → 20 页
+        if not self._large_result_prompted and total_pages > pages_threshold:
+            self._large_result_prompted = True
+            has_date = bool(
+                self._current_params.get("date_from")
+                or self._current_params.get("date_to")
+            )
+            hint = "缩小日期范围" if has_date else "添加日期范围"
+            approx = total_pages * 100
+            choice = QMessageBox.question(
+                self,
+                "结果集较大",
+                f"FDA API 返回约 {approx} 条申请记录（{total_pages} 页），"
+                f"全量获取可能较慢并占用较多内存。\n\n建议{hint}后重试。\n\n是否继续获取？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if choice == QMessageBox.No:
+                self._cancel_search = True  # 复用现有取消链路：worker 下一次 on_cancel 轮询中断
         self.result_label.setText(
             f"正在获取FDA数据 (第 {page}/{total_pages} 页, 已发现 {doc_count} 条文档)..."
         )

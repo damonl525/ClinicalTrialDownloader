@@ -172,6 +172,8 @@ DEFAULT_CONCEPTS = [
 # ================================================================
 FDA_API_BASE = "https://api.fda.gov/drug/drugsfda.json"
 FDA_API_RATE_LIMIT = 1.5  # seconds between calls (no API key, ~40/min)
+# P1-11: api_total 超此记录数时提示用户缩小范围（≈2000 条 = 20 页，约 30s 获取）
+FDA_LARGE_RESULT_THRESHOLD = 2000
 
 FDA_REVIEW_DOC_TYPES = {
     "Medical Review(s)": "医学审评",
