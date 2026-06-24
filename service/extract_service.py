@@ -94,6 +94,59 @@ class ExtractService:
         return df
 
     # ================================================================
+    # Protocol scope resolution
+    # ================================================================
+
+    def resolve_protocol_scope(
+        self,
+        scope_ids: Optional[List[str]],
+        scope_choice: str,
+        on_log: Optional[Callable[[str, str], None]] = None,
+    ) -> List[str]:
+        """Resolve effective scope IDs when the Protocol-only filter is active.
+
+        CTGOV2 和 ISRCTN 有 Protocol 文档元数据，get_protocol_trial_ids()
+        返回有 Protocol 文档的精确子集；EUCTR/CTIS 无此元数据，"all_registries"
+        下需把其在范围内的 ID 整体并入。
+
+        scope_choice:
+          - "ctgov_isrctn_only": effective = protocol_ids
+          - "all_registries":    effective = dedup(protocol_ids + EUCTR/CTIS IDs)
+
+        scope_ids 为 None 表示全库模式（EUCTR/CTIS 取自 get_all_trial_ids()；
+        若后者为空则回退到 protocol_ids 并发 warning）。
+
+        返回去重保序列表；空列表 = 无匹配（调用方应 emit 空 DataFrame）。
+        """
+        protocol_ids = self.bridge.get_protocol_trial_ids(scope_ids)
+
+        if scope_choice == "ctgov_isrctn_only":
+            return list(protocol_ids)
+
+        # "all_registries": 并入 EUCTR/CTIS
+        if scope_ids is not None:
+            source_ids = scope_ids
+        else:
+            source_ids = self.bridge.get_all_trial_ids()
+            if not source_ids and on_log:
+                on_log("warning", "获取全部试验ID失败，仅使用Protocol查询结果")
+
+        euctr_ctis_ids = [
+            sid for sid in (source_ids or [])
+            if classify_registry(sid) in ("EUCTR", "CTIS")
+        ]
+        effective_scope = list(dict.fromkeys(protocol_ids + euctr_ctis_ids))
+
+        if on_log:
+            on_log(
+                "info",
+                f"Protocol scope breakdown: {len(protocol_ids)} CTGOV2+ISRCTN, "
+                f"{len(euctr_ctis_ids)} EUCTR/CTIS, "
+                f"{len(effective_scope)} total",
+            )
+        return effective_scope
+
+    # ================================================================
     # Document download
     # ================================================================
 
