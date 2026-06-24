@@ -4,6 +4,11 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [Unreleased]
+
+### 改进
+- **CTGOV2 文档下载批量优化**：CTGOV2 试验文档改走单 R session 批量下载（一次会话内完成所有 CTGOV2 trial），减少逐 trial 独立 R 子进程的进程税；EUCTR/CTIS 仍保持逐 trial 隔离下载（各自独立 timeout）
+
 ## [1.5.0] - 2026-05-05
 
 ### 新功能
