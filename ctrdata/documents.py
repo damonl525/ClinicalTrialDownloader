@@ -15,6 +15,12 @@ import shutil
 from typing import Any, Callable, Dict, List
 
 from core.exceptions import DatabaseError, CtrdataError, DownloadTimeoutError
+from core.constants import (
+    DOC_DOWNLOAD_TIMEOUT_TOTAL,
+    DOC_DOWNLOAD_PER_TRIAL,
+    RESUME_PATH_SLUG_LENGTH,
+    RESUME_SESSION_HASH_LENGTH,
+)
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
 
@@ -80,7 +86,7 @@ def _get_resume_file(bridge, documents_path: str) -> str:
     """Get the checkpoint file path scoped to database + download directory."""
     db_basename = os.path.splitext(os.path.basename(bridge.db_path))[0]
     db_dir = os.path.dirname(bridge.db_path) or "."
-    path_slug = hashlib.md5(os.path.abspath(documents_path).encode()).hexdigest()[:8]
+    path_slug = hashlib.md5(os.path.abspath(documents_path).encode()).hexdigest()[:RESUME_PATH_SLUG_LENGTH]
     return os.path.join(db_dir, f"{db_basename}_{path_slug}_doc_resume.json")
 
 
@@ -88,7 +94,7 @@ def _session_hash(trial_ids, documents_path: str = "") -> str:
     """Compute a session hash from trial IDs + download path for resume isolation."""
     sorted_ids = sorted(str(tid) for tid in trial_ids)
     payload = ",".join(sorted_ids) + "|" + os.path.abspath(documents_path)
-    return hashlib.md5(payload.encode()).hexdigest()[:16]
+    return hashlib.md5(payload.encode()).hexdigest()[:RESUME_SESSION_HASH_LENGTH]
 
 
 def _find_resume_files_for_db(db_path: str) -> List[str]:
@@ -218,8 +224,8 @@ def download_documents_for_ids(
     trial_ids: List[str],
     documents_path: str,
     documents_regexp: str = None,
-    timeout_total: int = 86400,
-    per_trial_timeout: int = 180,
+    timeout_total: int = DOC_DOWNLOAD_TIMEOUT_TOTAL,
+    per_trial_timeout: int = DOC_DOWNLOAD_PER_TRIAL,
     callback: Callable = None,
 ) -> Dict[str, Any]:
     """
@@ -398,100 +404,6 @@ def download_documents_for_ids(
         "success": list(runtime_completed),
         "failed": failed,
         "skipped": skipped,
-        "skipped_existing": list(already_done),
-        "total": len(trial_ids),
-    }
-
-
-# ============================================================
-# Batch document download with single R session + resume
-# ============================================================
-
-def download_documents_batch(
-    bridge,
-    trial_ids: list,
-    documents_path: str,
-    documents_regexp: str = None,
-    timeout_total: int = 7200,
-    per_trial_timeout: int = 180,
-    callback: Callable = None,
-) -> dict:
-    """Download documents using a single R batch session with resume support.
-
-    Deprecated: use download_documents_for_ids() for per-trial timeout isolation.
-    """
-    if not bridge.db_path:
-        raise DatabaseError("请先连接数据库")
-    if not trial_ids:
-        return {"ok": True, "success": [], "failed": {}, "skipped": {}, "total": 0}
-
-    os.makedirs(documents_path, exist_ok=True)
-
-    resume_file = _get_resume_file(bridge, documents_path)
-    resume_data = _load_resume(bridge, resume_file)
-
-    current_session = _session_hash(trial_ids, documents_path)
-    if resume_data.get("session") and resume_data["session"] != current_session:
-        _cleanup_resume(bridge, resume_file)
-        resume_data = {"completed": [], "failed": {}, "skipped_explicitly": [], "in_progress": [], "total": 0, "session": None}
-
-    resume_completed_raw = set(resume_data.get("completed", []))
-    already_done = {tid for tid in resume_completed_raw if _trial_has_docs(documents_path, tid)}
-    skipped_explicit = set(resume_data.get("skipped_explicitly", []))
-    remaining = [tid for tid in trial_ids if tid not in already_done and tid not in skipped_explicit]
-
-    if not remaining:
-        return {
-            "ok": True,
-            "success": [tid for tid in already_done if tid in set(str(t) for t in trial_ids)],
-            "failed": {},
-            "skipped": {},
-            "total": len(trial_ids),
-        }
-
-    runtime_completed = list(already_done)
-
-    def _on_progress(i, total, tid, status, error):
-        if callback:
-            callback(i, total, tid, status, error)
-        if status == "ok":
-            _flatten_trial_docs(documents_path, tid)
-            if tid not in runtime_completed and _trial_has_docs(documents_path, tid):
-                runtime_completed.append(tid)
-                _save_resume(
-                    bridge, resume_file, runtime_completed,
-                    resume_data.get("failed", {}), len(trial_ids),
-                    skipped_explicitly=list(skipped_explicit),
-                    session=current_session,
-                )
-
-    from ctrdata.process import download_batch_docs as _batch
-    results = _batch(
-        bridge, remaining, documents_path, documents_regexp,
-        total_timeout=timeout_total,
-        progress_callback=_on_progress,
-    )
-
-    # Aggregate results
-    success = list(runtime_completed)
-    failed = {}
-    for r in results:
-        tid = r.get("trial_id", "")
-        if r.get("ok"):
-            if tid not in success:
-                success.append(tid)
-        else:
-            err = r.get("error", "unknown")
-            failed[tid] = err
-
-    if not failed:
-        _cleanup_resume(bridge, resume_file)
-
-    return {
-        "ok": True,
-        "success": success,
-        "failed": failed,
-        "skipped": {},
         "skipped_existing": list(already_done),
         "total": len(trial_ids),
     }

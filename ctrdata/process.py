@@ -27,6 +27,12 @@ import threading
 from typing import Any, Callable, Optional
 
 from core.exceptions import CtrdataError, DownloadTimeoutError
+from core.constants import (
+    R_POLL_INTERVAL,
+    R_TIMEOUT_BUFFER,
+    R_TEMP_FILE_MAX_AGE,
+    R_TEMP_FILE_PATTERN,
+)
 from ctrdata.template_loader import render as _render
 
 logger = logging.getLogger(__name__)
@@ -66,29 +72,52 @@ def _extract_json_from_output(output: str, expect: str = "any") -> Optional[Any]
     return None
 
 
-def run_r(
-    bridge,
-    r_code: str,
-    timeout: int = 600,
-) -> subprocess.CompletedProcess:
-    """Execute R code via temp .R file, return CompletedProcess."""
-    wrapped = (
+def _wrap_r_code(r_code: str, error_format: str = "json") -> str:
+    """Wrap R code with library loading and tryCatch error handling.
+
+    Shared by run_r() and run_r_streaming() to eliminate wrapper duplication (P2-9).
+
+    Args:
+        r_code: Raw R code to wrap.
+        error_format: "json" → toJSON error output (run_r/run_r_json);
+                      "streaming" → ERROR\\t line output (run_r_streaming).
+    """
+    if error_format == "streaming":
+        error_handler = (
+            "}, error = function(e) {\n"
+            "  cat(sprintf('ERROR\\t%s\\n', as.character(e$message)))\n"
+            "})\n"
+        )
+    else:
+        error_handler = (
+            "}, error = function(e) {\n"
+            "  cat(jsonlite::toJSON(list(\n"
+            "    ok = FALSE,\n"
+            "    error = as.character(e$message)\n"
+            "  ), auto_unbox=TRUE))\n"
+            "})\n"
+        )
+    return (
         "suppressMessages({\n"
         "  library(jsonlite)\n"
         "  library(nodbi)\n"
         "  library(ctrdata)\n"
         "})\n"
         "tryCatch({\n" + r_code + "\n"
-        "}, error = function(e) {\n"
-        "  cat(jsonlite::toJSON(list(\n"
-        "    ok = FALSE,\n"
-        "    error = as.character(e$message)\n"
-        "  ), auto_unbox=TRUE))\n"
-        "})\n"
+        + error_handler
     )
 
+
+def run_r(
+    bridge,
+    r_code: str,
+    timeout: int = 600,
+) -> subprocess.CompletedProcess:
+    """Execute R code via temp .R file, return CompletedProcess."""
+    wrapped = _wrap_r_code(r_code, error_format="json")
+
     tmp_r = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".R", delete=False, encoding="utf-8"
+        mode="w", prefix="ctrdata_", suffix=".R", delete=False, encoding="utf-8"
     )
     try:
         tmp_r.write(wrapped)
@@ -151,20 +180,10 @@ def run_r_streaming(
     on_timeout: Callable[[int], str] = None,
 ) -> subprocess.CompletedProcess:
     """Execute R code, read stdout line-by-line with progress callbacks."""
-    wrapped = (
-        "suppressMessages({\n"
-        "  library(jsonlite)\n"
-        "  library(nodbi)\n"
-        "  library(ctrdata)\n"
-        "})\n"
-        "tryCatch({\n" + r_code + "\n"
-        "}, error = function(e) {\n"
-        "  cat(sprintf('ERROR\\t%s\\n', as.character(e$message)))\n"
-        "})\n"
-    )
+    wrapped = _wrap_r_code(r_code, error_format="streaming")
 
     tmp_r = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".R", delete=False, encoding="utf-8"
+        mode="w", prefix="ctrdata_", suffix=".R", delete=False, encoding="utf-8"
     )
     proc = None  # Popen 失败时 finally 引用未绑定 proc 会 UnboundLocalError 掩盖原异常
     try:
@@ -223,7 +242,7 @@ def run_r_streaming(
         stdout_lines = []
         start = time.time()
         last_activity = time.time()
-        poll_interval = 0.5
+        poll_interval = R_POLL_INTERVAL
         continue_count = 0
 
         while True:
@@ -243,7 +262,10 @@ def run_r_streaming(
                             continue_count += 1
                             continue
                     proc.kill()
-                    proc.wait(timeout=5)
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("R process did not terminate within 5s after kill (timeout)")
                     reason = "已达到最大续期次数" if continue_count >= _MAX_TIMEOUT_CONTINUES else ""
                     raise DownloadTimeoutError(
                         f"R 执行超时（{timeout}秒）{reason}",
@@ -260,7 +282,10 @@ def run_r_streaming(
                             continue_count += 1
                             continue
                     proc.kill()
-                    proc.wait(timeout=5)
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        logger.warning("R process did not terminate within 5s after kill (stall)")
                     raise DownloadTimeoutError(
                         f"下载无响应超时（{stall_timeout}秒），已自动终止。\n"
                         f"可重新点击下载按钮重新下载。",
@@ -288,14 +313,25 @@ def run_r_streaming(
                         # Don't raise — keep reading
                     else:
                         proc.kill()
-                        proc.wait(timeout=5)
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            logger.warning("R process did not terminate within 5s after kill (line timeout)")
                         raise DownloadTimeoutError(
                             f"R 执行超时（{timeout}秒）",
                             elapsed=int(time.time() - start),
                             user_action=_choice,
                         )
 
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            logger.warning("R process did not exit within 10s after EOF, forcing kill")
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
         # 等 stderr reader 消费完（proc 退出后 stderr EOF，线程自然结束）
         err_reader.join(timeout=5)
         stdout = "\n".join(stdout_lines)
@@ -406,7 +442,7 @@ def download_one_trial_doc(
     proc = run_r_streaming(
         bridge,
         r_code,
-        timeout=timeout + 30,
+        timeout=timeout + R_TIMEOUT_BUFFER,
         stall_timeout=timeout,
     )
 
@@ -444,7 +480,7 @@ def _download_euctr_trial_doc(
     proc = run_r_streaming(
         bridge,
         r_code,
-        timeout=timeout + 30,
+        timeout=timeout + R_TIMEOUT_BUFFER,
         stall_timeout=timeout,
     )
 
@@ -487,7 +523,7 @@ def _download_ctis_trial_doc(
     proc = run_r_streaming(
         bridge,
         r_code,
-        timeout=timeout + 30,
+        timeout=timeout + R_TIMEOUT_BUFFER,
         stall_timeout=timeout,
     )
 
@@ -584,10 +620,12 @@ def cleanup_temp_files():
     import glob
 
     tmp_dir = tempfile.gettempdir()
-    stale_threshold = time.time() - 86400
-    for f in glob.glob(os.path.join(tmp_dir, "tmp*.R")):
-        try:
-            if os.path.getmtime(f) < stale_threshold:
-                os.unlink(f)
-        except Exception:
-            pass
+    stale_threshold = time.time() - R_TEMP_FILE_MAX_AGE
+    # Clean both new ctrdata_*.R files and legacy tmp*.R files (pre-P2-5 naming)
+    for pattern in (R_TEMP_FILE_PATTERN, "tmp*.R"):
+        for f in glob.glob(os.path.join(tmp_dir, pattern)):
+            try:
+                if os.path.getmtime(f) < stale_threshold:
+                    os.unlink(f)
+            except Exception:
+                pass
