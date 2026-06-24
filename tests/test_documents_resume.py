@@ -103,3 +103,33 @@ def test_download_stops_on_cancel(tmp_path, monkeypatch):
     result = download_documents_for_ids(bridge, euctr_ids, documents_path)
 
     assert calls == [euctr_ids[0]]  # 只下了第一个就停
+
+
+def test_find_resume_files_glob_matches_hashed_names(tmp_path):
+    """_find_resume_files_for_db 返回该 db 的所有 hash 命名 resume 文件。"""
+    from ctrdata.documents import _find_resume_files_for_db
+
+    db_path = str(tmp_path / "trials.sqlite")
+    # 真实 resume 文件模式: {db_basename}_{8-hex path_slug}_doc_resume.json
+    f1 = tmp_path / "trials_a1b2c3d4_doc_resume.json"
+    f2 = tmp_path / "trials_e5f6a7b8_doc_resume.json"
+    f1.write_text("{}")
+    f2.write_text("{}")
+    # 干扰项必须被忽略
+    (tmp_path / "trials.sqlite").write_text("db")          # db 文件本身
+    (tmp_path / "other_a1b2c3d4_doc_resume.json").write_text("{}")  # 另一个 db
+    (tmp_path / "trials_doc_resume.json").write_text("{}")  # legacy 无 hash（非生产格式）
+
+    found = {os.path.basename(p) for p in _find_resume_files_for_db(db_path)}
+    assert found == {
+        "trials_a1b2c3d4_doc_resume.json",
+        "trials_e5f6a7b8_doc_resume.json",
+    }
+
+
+def test_find_resume_files_empty_when_none(tmp_path):
+    """无 resume 文件时返回空列表，不报错。"""
+    from ctrdata.documents import _find_resume_files_for_db
+
+    db_path = str(tmp_path / "trials.sqlite")
+    assert _find_resume_files_for_db(db_path) == []

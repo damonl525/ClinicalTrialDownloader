@@ -327,13 +327,16 @@ class DatabaseTab(QWidget):
             QMessageBox.critical(self, "删除失败", f"无法删除数据库文件: {e}")
             return
 
-        # Remove associated resume file
-        resume_path = os.path.splitext(db_path)[0] + "_doc_resume.json"
-        try:
-            if os.path.exists(resume_path):
+        # Remove associated resume file(s) — production names them
+        # {db_basename}_{path_slug}_doc_resume.json (one per download dir).
+        # The old no-hash pattern never matched the real files, leaving orphans.
+        from ctrdata.documents import _find_resume_files_for_db
+
+        for resume_path in _find_resume_files_for_db(db_path):
+            try:
                 os.remove(resume_path)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         self.info_label.setText("数据库已删除")
         self.info_label.setStyleSheet("color: #64748B;")

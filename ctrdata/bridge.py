@@ -194,20 +194,6 @@ class CtrdataBridge:
             timeout_total, per_trial_timeout, callback,
         )
 
-    def _get_resume_file(self, documents_path: str) -> str:
-        """Get the checkpoint file path for a documents directory."""
-        db_basename = os.path.splitext(os.path.basename(self.db_path))[0]
-        db_dir = os.path.dirname(self.db_path) or "."
-        return os.path.join(db_dir, f"{db_basename}_doc_resume.json")
-
-    @staticmethod
-    def _session_hash(trial_ids) -> str:
-        """Compute a session hash from sorted trial IDs for resume isolation."""
-        import hashlib
-
-        sorted_ids = sorted(str(tid) for tid in trial_ids)
-        return hashlib.md5(",".join(sorted_ids).encode()).hexdigest()[:16]
-
     def _load_resume(self, resume_file: str) -> dict:
         """Load checkpoint data from file."""
         return _docs._load_resume(self, resume_file)

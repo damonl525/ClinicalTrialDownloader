@@ -92,6 +92,24 @@ def _session_hash(trial_ids, documents_path: str = "") -> str:
     return hashlib.md5(payload.encode()).hexdigest()[:16]
 
 
+def _find_resume_files_for_db(db_path: str) -> List[str]:
+    """返回某数据库的所有 resume/checkpoint 文件（跨所有下载目录）。
+
+    resume 文件命名为 {db_basename}_{path_slug}_doc_resume.json，位于数据库
+    同目录；path_slug 是 documents_path 的 8 字符 md5，故单个数据库可能有多
+    个 resume 文件（每个下载目录一个）。用于删库时清理孤儿 checkpoint。
+
+    注意：不匹配 legacy 无 hash 的 {db_basename}_doc_resume.json —— 生产代码
+    已不再生成该格式，且它不携带 path_slug 无法安全归因。
+    """
+    import glob as _glob
+
+    db_dir = os.path.dirname(db_path) or "."
+    db_basename = os.path.splitext(os.path.basename(db_path))[0]
+    pattern = os.path.join(db_dir, f"{db_basename}_*_doc_resume.json")
+    return _glob.glob(pattern)
+
+
 def _trial_has_docs(documents_path: str, trial_id: str) -> bool:
     """Check if a trial has actual document files on disk."""
     trial_dir = os.path.join(documents_path, trial_id)

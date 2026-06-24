@@ -53,23 +53,30 @@ class TestBug1_ResumeFeature(unittest.TestCase):
         print("[Bug1-2] PASS: 全部已完成时有短路返回逻辑")
 
     def test_resume_file_path_correct(self):
-        """验证: 断点文件路径正确"""
+        """验证: 断点文件路径正确（生产用 documents.py 版本，含 path_slug hash）。"""
         from ctrdata_core import CtrdataBridge
+        from ctrdata.documents import _get_resume_file
 
         with patch.object(CtrdataBridge, "__init__", lambda self: None):
             bridge = CtrdataBridge()
             bridge.db_path = "/test/path/trials.db"
 
-            resume_file = bridge._get_resume_file("/documents/path")
+            resume_file = _get_resume_file(bridge, "/documents/path")
 
-            # Windows路径可能使用反斜杠
             normalized_path = resume_file.replace("\\", "/")
-            self.assertIn(
-                "trials_doc_resume.json", resume_file, "断点文件名应该基于数据库名"
-            )
-            self.assertIn("/test/path/", normalized_path, "断点文件应该在数据库目录")
+            base = os.path.basename(resume_file)
+            # 真实模式: {db_basename}_{8-hex path_slug}_doc_resume.json
+            self.assertTrue(base.startswith("trials_"),
+                            f"文件名应以 db basename 开头: {base!r}")
+            self.assertTrue(base.endswith("_doc_resume.json"),
+                            f"应以 _doc_resume.json 结尾: {base!r}")
+            slug = base[len("trials_"):-len("_doc_resume.json")]
+            self.assertEqual(len(slug), 8,
+                             f"path_slug 应为 8 字符 md5，实际: {slug!r}")
+            self.assertIn("/test/path/", normalized_path,
+                          "断点文件应该在数据库目录")
 
-        print("[Bug1-3] PASS: 断点文件路径正确")
+        print("[Bug1-3] PASS: 断点文件路径正确（含 path_slug hash）")
 
 
 class TestBug2_ScopeIdMatching(unittest.TestCase):
