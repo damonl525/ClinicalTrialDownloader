@@ -111,6 +111,59 @@ def find_fields(bridge, pattern: str = ".*") -> List[str]:
 # Data extraction with filtering
 # ============================================================
 
+def _filter_by_date(
+    df: pd.DataFrame,
+    filter_date_start: str = "",
+    filter_date_end: str = "",
+    strict_date: bool = False,
+) -> pd.DataFrame:
+    """按开始日期范围过滤；对 startDate 缺失的试验可选回退或排除。
+
+    宽松模式（strict_date=False，默认）：startDate 缺失时，用 _id 前 4 字符
+    （注册年份）的中点 {year}-07-01 近似——EUCTR/CTIS 的 startDate 普遍缺失，
+    全严格会丢大量试验。注意：注册年份 ≠ 实际开始年份，是已知近似，边界处
+    可能误筛。
+
+    严格模式（strict_date=True）：不回退，startDate 缺失的行 effective_date=NaT
+    → 被 notna() 排除，仅保留有真实开始日期的记录。
+
+    无 .startDate 列或未设任何日期范围时原样返回。
+    """
+    if not (filter_date_start or filter_date_end):
+        return df
+    if ".startDate" not in df.columns:
+        return df
+
+    df[".startDate"] = pd.to_datetime(df[".startDate"], errors="coerce")
+    has_date = df[".startDate"].notna()
+
+    if strict_date:
+        effective_date = df[".startDate"]
+    elif "_id" in df.columns:
+        id_years = df["_id"].astype(str).str[:4]
+        fallback = pd.to_datetime(id_years + "-07-01", format="%Y-%m-%d", errors="coerce")
+        effective_date = df[".startDate"].where(has_date, fallback)
+    else:
+        effective_date = df[".startDate"]
+
+    mask = pd.Series(True, index=df.index)
+    if filter_date_start:
+        mask &= effective_date >= pd.to_datetime(filter_date_start)
+    if filter_date_end:
+        mask &= effective_date <= pd.to_datetime(filter_date_end)
+    # Drop rows where effective_date is still NaT (no date and unparseable _id)
+    mask &= effective_date.notna()
+
+    n_before = len(df)
+    df = df[mask]
+    if len(df) != n_before:
+        logger.info(
+            f"Filter date [{filter_date_start}~{filter_date_end}] "
+            f"(strict={strict_date}): {n_before} → {len(df)} rows"
+        )
+    return df
+
+
 def extract_to_dataframe(
     bridge,
     fields: List[str] = None,
@@ -120,6 +173,7 @@ def extract_to_dataframe(
     filter_status: str = "",
     filter_date_start: str = "",
     filter_date_end: str = "",
+    strict_date: bool = False,
     filter_condition: str = "",
     filter_intervention: str = "",
     scope_ids: List[str] = None,
@@ -328,32 +382,9 @@ def extract_to_dataframe(
                     logger.info(f"Filter status '{filter_status}': {_n} → {len(df)} rows")
                     _n = len(df)
 
-            # Date range filter — use _id year as fallback for empty startDate
-            # EUCTR/CTIS _id format: YYYY-NNNNNN-XX-XX (first 4 chars = year)
-            if (filter_date_start or filter_date_end) and ".startDate" in df.columns:
-                df[".startDate"] = pd.to_datetime(df[".startDate"], errors="coerce")
-                has_date = df[".startDate"].notna()
-
-                # Build effective date: real date if available, else _id year midpoint
-                if "_id" in df.columns:
-                    id_years = df["_id"].astype(str).str[:4]
-                    fallback = pd.to_datetime(id_years + "-07-01", format="%Y-%m-%d", errors="coerce")
-                    effective_date = df[".startDate"].where(has_date, fallback)
-                else:
-                    effective_date = df[".startDate"]
-
-                mask = pd.Series(True, index=df.index)
-                if filter_date_start:
-                    mask &= effective_date >= pd.to_datetime(filter_date_start)
-                if filter_date_end:
-                    mask &= effective_date <= pd.to_datetime(filter_date_end)
-                # Drop rows where effective_date is still NaT (no date and unparseable _id)
-                mask &= effective_date.notna()
-
-                df = df[mask]
-                if len(df) != _n:
-                    logger.info(f"Filter date [{filter_date_start}~{filter_date_end}]: {_n} → {len(df)} rows")
-                    _n = len(df)
+            # Date range filter — strict_date controls _id year fallback (P1-4)
+            df = _filter_by_date(df, filter_date_start, filter_date_end, strict_date)
+            _n = len(df)
 
             # Condition keyword filter
             if filter_condition:

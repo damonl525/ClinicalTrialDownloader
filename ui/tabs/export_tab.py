@@ -306,6 +306,16 @@ class ExportTab(QWidget):
         )
         filter_layout.addWidget(self.protocol_only_check)
 
+        self.strict_date_check = QCheckBox("严格日期过滤")
+        self.strict_date_check.setToolTip(
+            "开始日期过滤说明：\n"
+            "部分 EUCTR/CTIS 试验无 startDate，默认按注册年份（_id 前4位）"
+            "近似为该年7月1日。注册年份 ≠ 实际开始年份，边界处可能误筛。\n"
+            "勾选「严格日期过滤」后，无 startDate 的试验将被排除，"
+            "仅保留有真实开始日期的记录。"
+        )
+        filter_layout.addWidget(self.strict_date_check)
+
         self._filter_card.set_body_layout(filter_layout)
         layout.addWidget(self._filter_card)
 
@@ -626,6 +636,7 @@ class ExportTab(QWidget):
 
         dedup = self.dedup_check.isChecked()
         protocol_filter = self.protocol_only_check.isChecked()
+        strict_date = self.strict_date_check.isChecked()
         filter_phase = FILTER_PHASES.get(self.phase_combo.currentText(), "")
         filter_status = FILTER_STATUSES.get(self.status_combo.currentText(), "")
         filter_condition = self.condition_input.text().strip()
@@ -706,6 +717,7 @@ class ExportTab(QWidget):
                     filter_status=filter_status,
                     filter_date_start=ds,
                     filter_date_end=de,
+                    strict_date=strict_date,
                     filter_condition=filter_condition,
                     filter_intervention=filter_intervention,
                     filter_register=filter_register,
