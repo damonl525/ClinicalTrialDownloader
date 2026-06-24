@@ -13,7 +13,6 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, QUrl, QTimer, Signal
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from service._silent_page import SilentPage as _SilentPage
 
 logger = logging.getLogger(__name__)
