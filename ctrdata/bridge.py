@@ -7,7 +7,6 @@ Main class that delegates to connection, search, extract, documents,
 and process submodules. Maintains full backward compatibility.
 """
 
-import json
 import os
 import logging
 from typing import Any, Callable, Dict, List, Optional, Set
