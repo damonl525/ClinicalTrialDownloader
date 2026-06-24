@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Clinical trial data downloader GUI (Python/PySide6 + R `ctrdata` package), current version **1.5.1** (`core/constants.py`). Downloads structured trial data from ClinicalTrials.gov (CTGOV2), EU CTR, ISRCTN, EU CTIS via the R `ctrdata` package, then extracts, filters, and exports to CSV with optional document downloads. Also has standalone FDA (openFDA) and CDE (国家药监局药审中心) review-document tabs that need **no R/database**.
+Clinical trial data downloader GUI (Python/PySide6 + R `ctrdata` package), current version **1.5.2** (`core/constants.py`). Downloads structured trial data from ClinicalTrials.gov (CTGOV2), EU CTR, ISRCTN, EU CTIS via the R `ctrdata` package, then extracts, filters, and exports to CSV with optional document downloads. Also has standalone FDA (openFDA) and CDE (国家药监局药审中心) review-document tabs that need **no R/database**.
 
 ## Commands
 
