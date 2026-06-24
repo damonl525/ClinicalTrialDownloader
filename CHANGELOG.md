@@ -4,6 +4,18 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.5.3] - 2026-06-24
+
+### 改进
+- **魔法数字集中化**（P2-2）：将散落在 `process.py`/`documents.py` 中的超时、间隔、截断长度等魔法数字集中到 `core/constants.py` 命名常量（`R_TIMEOUT_BUFFER`、`DOC_DOWNLOAD_TIMEOUT_TOTAL`、`RESUME_PATH_SLUG_LENGTH` 等），并注释依据
+- **R 包装器去重**（P2-9）：抽取 `_wrap_r_code()` 公共函数，消除 `run_r` 与 `run_r_streaming` 中逐字重复的 suppressMessages + library + tryCatch 包装逻辑
+- **子进程等待容错**（P2-6）：`run_r_streaming` 中 4 处 `proc.wait()` 加 try/except `TimeoutExpired`，避免进程僵死时抛未处理异常导致资源泄漏
+- **版本过滤精确化**（P2-4）：phase/status 过滤 `str.contains` 加 `regex=False`，防止 `phase 2+4` 等含正则元字符 `+` 的值被错误匹配
+- **临时文件命名**（P2-5）：R 临时文件前缀从 `tmp` 改为 `ctrdata_`，cleanup 同时兼容新旧两种前缀
+- **死代码清理**（P2-8）：移除已弃用且无调用者的 `download_documents_batch` 函数（~90 行）
+- **README 修正**（P2-3）：标题 "Four-Tab" → "Five-Tab"
+- **Legacy 标记**（P2-1）：`config_manager.py` / `validators.py` 添加 LEGACY 注释（仅 tkinter 回退路径使用，PySide6 主流程使用 QSettings）
+
 ## [1.5.2] - 2026-06-24
 
 ### 新功能
