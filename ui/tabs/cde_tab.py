@@ -396,7 +396,7 @@ class CdeTab(QWidget):
 
         # Confirm
         msg = (
-            f"即将下载 {len(rows)} 个药品的审评报告和说明书 PDF（共 {len(detail_urls) * 2} 个文件）。\n"
+            f"即将下载 {len(rows)} 个药品的审评报告和说明书 PDF（预计至多 {len(detail_urls) * 2} 个文件，实际以解析结果为准）。\n"
             f"保存到: {save_dir}\n\n确认开始下载？"
         )
         if QMessageBox.question(self, "确认下载", msg) != QMessageBox.Yes:
@@ -407,7 +407,7 @@ class CdeTab(QWidget):
 
         self.download_btn.setEnabled(False)
         self.search_btn.setEnabled(False)
-        self.download_progress.start(len(detail_urls) * 2)
+        self.download_progress.start(len(detail_urls))
         self.download_progress.set_cancel_enabled(True)
         self.download_progress.cancelled.connect(self._cancel_download)
 
@@ -448,6 +448,7 @@ class CdeTab(QWidget):
 
         done = len(self._detail_pdf_map)
         total = len(self._download_rows)
+        self.download_progress.update_progress(done, total, f"解析详情页 {done}/{total}")
         self.result_label.setText(f"正在解析详情页 ({done}/{total})...")
         logger.info("CDE详情页解析: %s — 审评报告=%s, 说明书=%s",
                      detail_url, bool(review_url), bool(instr_url))
@@ -462,6 +463,7 @@ class CdeTab(QWidget):
 
         done = len(self._detail_pdf_map)
         total = len(self._download_rows)
+        self.download_progress.update_progress(done, total, f"解析详情页 {done}/{total}")
         self.result_label.setText(f"正在解析详情页 ({done}/{total})...")
 
         if done >= total:
@@ -516,6 +518,7 @@ class CdeTab(QWidget):
             return
 
         self.result_label.setText(f"开始下载 PDF ({len(docs)} 个)...")
+        self.download_progress.start(len(docs))
 
         try:
             from service.cde_pdf_downloader import CdePdfDownloader
