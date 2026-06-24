@@ -4,10 +4,23 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
-## [Unreleased]
+## [1.5.1] - 2026-06-24
+
+### 新功能
+- **严格日期过滤模式**（P1-4）：提取页新增「严格日期过滤」复选框。EUCTR/CTIS 的开始日期普遍缺失，默认宽松模式用 `_id` 前 4 位（注册年份）的年中点近似补全；勾选严格模式后不再回退近似，按真实开始日期精确过滤，排除日期缺失的试验
+
+### 修复
+- **R 子进程下载死锁**（P0-1）：R 进程的 stderr 写满 64KB 管道缓冲时，`run_r_streaming` 会永久卡死。新增独立线程持续 drain stderr，杜绝管道阻塞
+- **中断 trial 文档残留**（P0-2）：下载被中断的 trial 在断点续传时会被跳过，但其残留的 partial 文件会让 ctrdata 误判已完成（不覆盖已有文件）。现于重下前清理中断 trial 的残缺文件（子目录 + 扁平前缀文件），强制完整重下
+- **进程跟踪缺陷**（P1-2）：`proc` 未初始化导致 `Popen` 失败时抛 `UnboundLocalError` 掩盖真实错误（已用 `proc=None` 初始化修复）；`cancel()` 此前只杀最近一个 R 进程而非全部并发进程（已改为遍历全部活动进程 kill）
 
 ### 改进
-- **CTGOV2 文档下载批量优化**：CTGOV2 试验文档改走单 R session 批量下载（一次会话内完成所有 CTGOV2 trial），减少逐 trial 独立 R 子进程的进程税；EUCTR/CTIS 仍保持逐 trial 隔离下载（各自独立 timeout）
+- **CTGOV2 文档下载批量优化**（P1-1）：CTGOV2 试验文档改走单 R session 批量下载（一次会话内完成所有 CTGOV2 trial），消除逐 trial 独立 R 子进程的进程启动税；EUCTR/CTIS 因需特殊参数与超时隔离、ISRCTN 走 HTTP，三者仍保持逐 trial 隔离下载
+- **Protocol scope 决策下沉**（P1-8）：提取页 `_worker` 内的 Protocol 多注册中心 scope 决策（CTGOV2/ISRCTN 精确过滤 vs EUCTR/CTIS 全量合并）下沉到 `ExtractService.resolve_protocol_scope()`，UI 层仅保留信号与日志，业务逻辑可脱离 Qt 单元测试
+- **R 输出 JSON 解析去重**（P1-6）：抽取公共 `_extract_json_from_output()`，消除 6 处重复的 R 输出 JSON 行扫描逻辑
+- **`_SilentPage` 去重**（P1-9）：4 个 service 文件逐字复制的 `_SilentPage` 类提取为共享 `service/_silent_page.py`
+- **死代码清理**（P1-5）：删除 `bridge.py` 中与生产实现矛盾的 `_get_resume_file`/`_session_hash` 死方法，`_delete_db` 改为清理带 path_slug hash 的 resume 文件；移除未用的 `re`/`json` import
+- **测试**：新增 40 个行为测试（8 个测试文件），覆盖 stderr 死锁、续传残留清理、进程跟踪/cancel、JSON 解析、Protocol scope、严格日期过滤、文档注册中心路由等修复点；校正 FDA 文件名断言以匹配英文 doc_type（P0-3a）
 
 ## [1.5.0] - 2026-05-05
 
