@@ -326,6 +326,22 @@ CDE_REG_CLASSES = {
     "5类": "5",
 }
 
+# ================================================================
+# R subprocess timeout / limit constants (P2-2)
+# ================================================================
+R_POLL_INTERVAL = 0.5                # stdout queue poll interval (seconds)
+R_TIMEOUT_BUFFER = 30                # extra seconds on per-trial timeout for R startup
+R_TEMP_FILE_MAX_AGE = 86400          # 24h, orphan temp .R file cleanup threshold
+R_TEMP_FILE_PATTERN = "ctrdata_*.R"  # temp file glob for cleanup (app-specific prefix)
+
+# Document download defaults
+DOC_DOWNLOAD_TIMEOUT_TOTAL = 86400   # 24h default total timeout
+DOC_DOWNLOAD_PER_TRIAL = 180         # 3min default per-trial timeout
+
+# Resume/checkpoint hash truncation lengths
+RESUME_PATH_SLUG_LENGTH = 8          # md5 hex digest truncation for directory isolation
+RESUME_SESSION_HASH_LENGTH = 16      # md5 hex digest truncation for session invalidation
+
 
 def classify_registry(tid: str) -> str:
     """Classify a trial _id into its registry.
