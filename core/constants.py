@@ -232,9 +232,19 @@ FDA_PDFFILES_MAP = {
 # R 错误中文翻译
 # ================================================================
 R_ERROR_TRANSLATIONS = [
-    # (pattern, translated_message)
+    # (pattern, translated_message)  — 顺序即优先级，_translate_r_error 首条命中即返回
     (r"V8 engine not found", "V8 引擎未安装。请在 R 中执行: install.packages('V8')"),
-    (r"cannot open the connection", "网络连接失败，请检查网络设置"),
+    # P3: 网络层诊断（DNS/SNI/代理）——放在笼统的"cannot open connection"之前，
+    # 覆盖报告问题 3/6：使用者把 SNI 封锁/DNS IPv6/无代理 env 误判为"限流"空等
+    (r"could not resolve host|name or service not known",
+     "域名解析失败。可能：① DNS 返回 IPv6 但本机无 IPv6 路由 ② 域名被污染。"
+     "建议：Settings→网络代理 配置本地代理端口，或终端 set HTTPS_PROXY=http://127.0.0.1:端口"),
+    (r"connection timed out|ssl certificate verification|sni",
+     "网络连接失败/SSL 握手异常，可能遭遇 SNI 层封锁。"
+     "建议：Settings→网络代理 配置本地代理端口（如 Clash 7892）后重试"),
+    (r"cannot open the connection|unable to connect|could not open connection",
+     "无法连接到注册中心服务器。clinicaltrials.gov 域名持续 000 多为 CDN/SNI 封锁，"
+     "需配置代理（Settings→网络代理）或在终端 set HTTPS_PROXY"),
     (r"HTTP error 404", "请求的页面不存在，请检查搜索条件"),
     (r"HTTP error 429", "请求过于频繁，请稍后再试"),
     (r"HTTP error 5[0-9]{2}", "服务器错误，请稍后再试"),
