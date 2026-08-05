@@ -12,16 +12,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 def _rscript():
-    """返回可用的 Rscript 路径，不仅存在且能实际执行（CI 可能预装残缺 R）。"""
+    """返回可用的 Rscript 路径，且 jsonlite 可加载（run_r_streaming 依赖它）。
+
+    CI runner 可能预装残缺 R（有 Rscript 但缺 jsonlite/ctrdata），此时跳过。
+    """
     import subprocess
     try:
         from ctrdata.process import _find_rscript
         rs = _find_rscript()
         if not rs:
             return None
-        # 验证 Rscript 能跑（CI 可能预装了 R 但缺 ctrdata/库，路径在但执行失败）
-        r = subprocess.run([rs, "--version"], capture_output=True, timeout=10)
-        if r.returncode != 0:
+        # 验证 Rscript 能跑 + jsonlite 可加载（run_r_streaming 的 _wrap_r_code 会 library(jsonlite)）
+        check = (
+            'suppressMessages(library(jsonlite));'
+            'cat("OK")'
+        )
+        r = subprocess.run([rs, "-e", check], capture_output=True, timeout=15)
+        if r.returncode != 0 or b"OK" not in r.stdout:
             return None
         return rs
     except Exception:
