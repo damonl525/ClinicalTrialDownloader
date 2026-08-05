@@ -107,4 +107,27 @@ def create_app() -> tuple[QApplication, str]:
     effective = resolve_theme(mode)
     apply_theme(app, effective)
 
+    # P4: 注入代理 env 给 R 子进程（绕过 clinicaltrials.gov 的 CDN/SNI 封锁）。
+    # 用 setdefault 尊重用户已设的系统 env（终端启动场景）；GUI 双击启动时补上。
+    # 不改 subprocess 签名——R 子进程自然继承父 env。QWebEngine 走系统代理不受影响。
+    _inject_proxy_env()
+
     return app, effective
+
+
+def _inject_proxy_env() -> None:
+    """根据 QSettings net/proxy_port 注入 http(s)_proxy 环境变量。
+
+    仅在端口 > 0 时注入；端口 0=直连，不修改 env。setdefault 保证不覆盖用户
+    已有的系统/终端 env。
+    """
+    from core.constants import PROXY_HOST, PROXY_DEFAULT_PORT
+    try:
+        proxy_port = int(get_settings().value("net/proxy_port", PROXY_DEFAULT_PORT))
+    except (TypeError, ValueError):
+        return
+    if proxy_port <= 0:
+        return
+    proxy_url = f"http://{PROXY_HOST}:{proxy_port}"
+    for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
+        os.environ.setdefault(key, proxy_url)
