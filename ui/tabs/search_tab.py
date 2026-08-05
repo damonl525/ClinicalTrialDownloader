@@ -59,6 +59,21 @@ class DownloadResultDialog(QMessageBox):
 
         summary = "本次下载:\n  " + "\n  ".join(summary_parts)
 
+        # P1: n:0 假成功显式告警
+        # 触发条件：n==0 且无失败（区分"真 0 结果"与"部分失败但 N>0"）。
+        # 可能是查询过宽触发 CTGOV2 >10000 上限（返回 n:0 假成功），
+        # 或批次恰好含触发 ctrdata 上游 bug 的特殊试验（整批失败 n:0）。
+        if n == 0 and not failed:
+            self.setIcon(QMessageBox.Warning)
+            summary = (
+                "⚠️ 本次下载 0 条记录。\n\n"
+                "可能原因：① 查询条件过宽触发 CTGOV2 >10000 上限（返回 n:0 假成功）"
+                "② 批次恰好含触发 ctrdata 上游 bug 的特殊试验（整批失败）"
+                "③ 查询本身无匹配结果。\n\n"
+                "建议：先「预览数量」确认规模，按季度/年度分批（每批 <10000），失败批次重试。\n\n"
+                + summary
+            )
+
         # Detail sections
         details = []
 
@@ -91,6 +106,16 @@ class DownloadResultDialog(QMessageBox):
                 reg = item.get("register", "?")
                 err = item.get("error", item.get("id", "未知错误"))
                 lines.append(f"  [{reg}] {err}")
+            details.append("\n".join(lines))
+
+        # P5: R 层警告透出（来自 R 输出的 ERROR\t 行，search_download.py 聚合）
+        warnings = result.get("warnings", [])
+        if warnings:
+            lines = ["R 层警告:"]
+            for w in warnings[:50]:
+                lines.append(f"  {w}")
+            if len(warnings) > 50:
+                lines.append(f"  ... 及其他 {len(warnings) - 50} 条")
             details.append("\n".join(lines))
 
         # Success list (always show if not too many)

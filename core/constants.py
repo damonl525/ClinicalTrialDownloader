@@ -232,9 +232,26 @@ FDA_PDFFILES_MAP = {
 # R 错误中文翻译
 # ================================================================
 R_ERROR_TRANSLATIONS = [
-    # (pattern, translated_message)
+    # (pattern, translated_message)  — 顺序即优先级，_translate_r_error 首条命中即返回
     (r"V8 engine not found", "V8 引擎未安装。请在 R 中执行: install.packages('V8')"),
-    (r"cannot open the connection", "网络连接失败，请检查网络设置"),
+    # ctrdata 上游 bug：CTGOV2 某些试验的 API 响应含未转义控制字符（U+0000-U+001F），
+    # R jsonlite::fromJSON 严格解析失败。无法在 Python 层修复（错误在 R 解析 API 响应时）。
+    # 给用户明确诊断，避免误以为是网络/工具问题。
+    (r"control characters from U\+0000 through U\+001F must be escaped",
+     "ctrdata 上游 bug：CTGOV2 API 响应含未转义控制字符，R jsonlite 解析失败。"
+     "该试验数据本身的问题（非网络/工具故障），目前无法自动修复。"
+     "建议：① 跳过该试验 ② 等 ctrdata/jsonlite 更新 ③ 上报 upstream"),
+    # P3: 网络层诊断（DNS/SNI/代理）——放在笼统的"cannot open connection"之前，
+    # 覆盖报告问题 3/6：使用者把 SNI 封锁/DNS IPv6/无代理 env 误判为"限流"空等
+    (r"could not resolve host|name or service not known",
+     "域名解析失败。可能：① DNS 返回 IPv6 但本机无 IPv6 路由 ② 域名被污染。"
+     "建议：Settings→网络代理 配置本地代理端口，或终端 set HTTPS_PROXY=http://127.0.0.1:端口"),
+    (r"connection timed out|ssl certificate verification|sni",
+     "网络连接失败/SSL 握手异常，可能遭遇 SNI 层封锁。"
+     "建议：Settings→网络代理 配置本地代理端口（如 Clash 7892）后重试"),
+    (r"cannot open the connection|unable to connect|could not open connection",
+     "无法连接到注册中心服务器。clinicaltrials.gov 域名持续 000 多为 CDN/SNI 封锁，"
+     "需配置代理（Settings→网络代理）或在终端 set HTTPS_PROXY"),
     (r"HTTP error 404", "请求的页面不存在，请检查搜索条件"),
     (r"HTTP error 429", "请求过于频繁，请稍后再试"),
     (r"HTTP error 5[0-9]{2}", "服务器错误，请稍后再试"),
@@ -341,6 +358,15 @@ DOC_DOWNLOAD_PER_TRIAL = 180         # 3min default per-trial timeout
 # Resume/checkpoint hash truncation lengths
 RESUME_PATH_SLUG_LENGTH = 8          # md5 hex digest truncation for directory isolation
 RESUME_SESSION_HASH_LENGTH = 16      # md5 hex digest truncation for session invalidation
+
+# Document file validation (P2) — 落盘后校验，防 HTML/SPA 壳冒充 PDF
+PDF_MAGIC_BYTES = b"%PDF-"           # PDF 文件头标识
+HTML_DETECT_BYTES = b"<!DOCTYPE"     # SPA/HTML 壳页面特征
+DOC_VALIDATE_MIN_SIZE = 1024         # 有效 PDF 最小字节数（低于此值视为损坏/空）
+
+# Network proxy (P4) — R 子进程代理 env 注入，绕过 CDN/SNI 封锁
+PROXY_DEFAULT_PORT = 0               # 0 = 不启用代理（直连）；常见：Clash 7892 / V2Ray 10809
+PROXY_HOST = "127.0.0.1"             # 本地代理主机
 
 
 def classify_registry(tid: str) -> str:

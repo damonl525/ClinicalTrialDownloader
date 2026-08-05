@@ -13,6 +13,9 @@ qtawesome>=1.3.0      # FontAwesome icons for Qt
 requests>=2.28.0      # HTTP请求（用于文档下载）
 darkdetect>=0.8.0     # System dark mode detection (optional)
 
+# MCP server（仅 mcp_server.py 用，GUI 不依赖；AI agent 无 GUI 调用接口）
+# 安装：pip install mcp>=2.0  详见 docs/MCP_API.md
+
 # 开发/测试依赖（可选）
 # pytest>=7.0.0       # 单元测试
 # pytest-cov>=3.0.0   # 测试覆盖率

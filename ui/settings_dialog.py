@@ -83,6 +83,31 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(doc_group)
 
+        # ── Network proxy group (P4) ──
+        net_group = QGroupBox("网络代理")
+        net_form = QFormLayout(net_group)
+        net_form.setSpacing(SPACING["sm"])
+
+        self.proxy_port_spin = QSpinBox()
+        self.proxy_port_spin.setRange(0, 65535)
+        self.proxy_port_spin.setSpecialValueText("不启用（直连）")
+        self.proxy_port_spin.setSuffix(" 端口")
+        self.proxy_port_spin.setToolTip(
+            "用于绕过 clinicaltrials.gov 的 CDN/SNI 封锁。\n"
+            "仅影响 R 子进程的数据/文档下载，不影响 FDA/CDE（走 QWebEngine 系统代理）。\n"
+            "填 0=直连。需重启应用生效。"
+        )
+        net_form.addRow("本地代理:", self.proxy_port_spin)
+
+        proxy_hint = QLabel(
+            "常见端口：Clash 7892 / V2Ray 10809 / SOCKS 1080。\n"
+            "前提：本机已运行代理客户端。设置后重启应用生效。"
+        )
+        proxy_hint.setWordWrap(True)
+        net_form.addRow("", proxy_hint)
+
+        layout.addWidget(net_group)
+
         # ── Buttons ──
         btn_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
@@ -107,6 +132,11 @@ class SettingsDialog(QDialog):
         # Timeout
         self.timeout_spin.setValue(
             int(settings.value("doc/timeout", 120))
+        )
+        # Proxy port (P4)
+        from core.constants import PROXY_DEFAULT_PORT
+        self.proxy_port_spin.setValue(
+            int(settings.value("net/proxy_port", PROXY_DEFAULT_PORT))
         )
 
     def _browse_db_path(self):
@@ -148,6 +178,9 @@ class SettingsDialog(QDialog):
 
         # Save timeout
         settings.setValue("doc/timeout", self.timeout_spin.value())
+
+        # Save proxy port (P4)
+        settings.setValue("net/proxy_port", self.proxy_port_spin.value())
 
         self.accept()
 

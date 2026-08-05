@@ -20,11 +20,90 @@ from core.constants import (
     DOC_DOWNLOAD_PER_TRIAL,
     RESUME_PATH_SLUG_LENGTH,
     RESUME_SESSION_HASH_LENGTH,
+    PDF_MAGIC_BYTES,
+    HTML_DETECT_BYTES,
+    DOC_VALIDATE_MIN_SIZE,
 )
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================
+# Downloaded file validation (P2)
+# ============================================================
+
+def _validate_downloaded_file(filepath: str) -> tuple:
+    """校验下载文件是否为有效 PDF，返回 (is_valid, reason)。
+
+    命中 HTML 壳/小文件/非 PDF 时返回 (False, 原因)。有效 PDF 返回 (True, "")。
+    覆盖客户报告问题 4：文档下载通道被前端 SPA 保护，/download/{id}/{file}
+    返回 94KB Angular SPA 的 HTML 而非 PDF，工具此前静默存了 HTML 当 PDF。
+    """
+    if not os.path.isfile(filepath):
+        return False, "文件不存在"
+    try:
+        size = os.path.getsize(filepath)
+    except OSError:
+        return False, "无法读取文件大小"
+    if size < DOC_VALIDATE_MIN_SIZE:
+        return False, f"文件过小（{size} 字节，疑似空/损坏）"
+    try:
+        with open(filepath, "rb") as f:
+            head = f.read(16)
+    except OSError as e:
+        return False, f"无法读取文件头: {e}"
+    if head.startswith(PDF_MAGIC_BYTES):
+        return True, ""
+    # 命中 HTML 壳（SPA / 错误页 / CDN 拦截页）
+    if HTML_DETECT_BYTES in head or head.lstrip().lower().startswith(b"<html"):
+        return False, "下载到 HTML 网页而非 PDF（可能被前端 SPA 或 CDN 拦截，建议检查网络/代理）"
+    return False, f"非 PDF 文件（文件头: {head[:8]!r}）"
+
+
+def _validate_trial_docs(documents_path: str, trial_id: str) -> tuple:
+    """校验某 trial 的所有已落盘文档，删除坏文件。
+
+    同时检查 trial_id/ 子目录（flatten 前）和 trial_id_* 扁平文件（flatten 后，
+    由调用方在 flatten 后调用）。返回 (bad_removed_count, reasons_list)。
+
+    Returns:
+        (删除的坏文件数, 各坏文件的失败原因列表)
+    """
+    reasons = []
+    bad_removed = 0
+    checked = []
+
+    # trial_id/ 子目录（未 flatten，下载刚完成时）
+    trial_dir = os.path.join(documents_path, trial_id)
+    if os.path.isdir(trial_dir):
+        for fname in os.listdir(trial_dir):
+            fp = os.path.join(trial_dir, fname)
+            if os.path.isfile(fp):
+                checked.append(fp)
+
+    # trial_id_* 扁平文件（已 flatten，断点续传 resume 校验时）
+    if os.path.isdir(documents_path):
+        prefix = f"{trial_id}_"
+        for fname in os.listdir(documents_path):
+            if fname.startswith(prefix):
+                fp = os.path.join(documents_path, fname)
+                if os.path.isfile(fp):
+                    checked.append(fp)
+
+    for fp in checked:
+        is_valid, reason = _validate_downloaded_file(fp)
+        if not is_valid:
+            try:
+                os.remove(fp)
+                bad_removed += 1
+                reasons.append(f"{os.path.basename(fp)}: {reason}")
+                logger.warning("Trial %s 坏文件已删除: %s — %s", trial_id, os.path.basename(fp), reason)
+            except OSError as e:
+                logger.warning("无法删除坏文件 %s: %s", fp, e)
+
+    return bad_removed, reasons
 
 
 # ============================================================
@@ -320,12 +399,20 @@ def download_documents_for_ids(
                 return
             if status == "ok":
                 _flatten_trial_docs(documents_path, tid)
+                # P2: 校验落盘文件，删坏文件（HTML/SPA 壳冒充 PDF）
+                bad_removed, bad_reasons = _validate_trial_docs(documents_path, tid)
+                if bad_removed and callback:
+                    callback(i, total_to_process, tid, "file_invalid", f"{bad_removed} 个坏文件已删: {'; '.join(bad_reasons[:3])}")
                 if _trial_has_docs(documents_path, tid):
                     if tid not in runtime_completed:
                         runtime_completed.append(tid)
                     _save_runtime_resume()
                 else:
-                    runtime_failed[tid] = "No documents found for this trial"
+                    # 校验删除后无文件，或本来就没文档
+                    if bad_removed:
+                        runtime_failed[tid] = f"全部 {bad_removed} 个文件无效已删: {'; '.join(bad_reasons[:3])}"
+                    else:
+                        runtime_failed[tid] = "No documents found for this trial"
                     _save_runtime_resume()
             elif status == "error":
                 runtime_failed[tid] = error or "unknown"
@@ -363,6 +450,10 @@ def download_documents_for_ids(
             )
             if result.get("ok"):
                 file_skips = _flatten_trial_docs(documents_path, tid)
+                # P2: 校验落盘文件，删坏文件（HTML/SPA 壳冒充 PDF）
+                bad_removed, bad_reasons = _validate_trial_docs(documents_path, tid)
+                if bad_removed and callback:
+                    callback(global_i, total_to_process, tid, "file_invalid", f"{bad_removed} 个坏文件已删: {'; '.join(bad_reasons[:3])}")
                 if _trial_has_docs(documents_path, tid):
                     runtime_completed.append(tid)
                     if callback:
@@ -370,9 +461,12 @@ def download_documents_for_ids(
                         if file_skips:
                             callback(global_i, total_to_process, tid, "file_skip", str(file_skips))
                 else:
-                    runtime_failed[tid] = "No documents found for this trial"
+                    if bad_removed:
+                        runtime_failed[tid] = f"全部 {bad_removed} 个文件无效已删: {'; '.join(bad_reasons[:3])}"
+                    else:
+                        runtime_failed[tid] = "No documents found for this trial"
                     if callback:
-                        callback(global_i, total_to_process, tid, "skip", "No documents found")
+                        callback(global_i, total_to_process, tid, "skip", runtime_failed[tid])
             else:
                 err = result.get("error", "unknown")
                 runtime_failed[tid] = err
