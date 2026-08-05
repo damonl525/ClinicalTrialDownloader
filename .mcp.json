@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "clinical-trial-downloader": {
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["${workspaceFolder}/mcp_server.py"],
+      "env": {
+        "QT_QPA_PLATFORM": "offscreen"
+      }
+    }
+  }
+}
