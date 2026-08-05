@@ -48,6 +48,11 @@ def _extract_json_from_output(output: str, expect: str = "any") -> Optional[Any]
     从后往前扫描，找第一个以 '{' 或 '[' 开头的非空行并解析。解析失败时
     continue（继续找前一行）而非 break，以容忍 R 打印的含 '{' 的诊断行。
 
+    当 JSON 含未转义的控制字符（U+0000-U+001F，如文档元数据里的特殊字符）
+    时，R 的 jsonlite 偶尔会原样输出，导致 Python json.loads 严格解析失败。
+    此时先尝试严格解析，失败则清洗控制字符后重试（结构字符均为 ASCII 可打印，
+    U+0000-U+001F 无一为 JSON 结构字符，移除安全）。
+
     Args:
         output: R 进程的 stdout
         expect: "object" 只找 '{'，"array" 只找 '['，"any"（默认）两者皆可
@@ -56,6 +61,7 @@ def _extract_json_from_output(output: str, expect: str = "any") -> Optional[Any]
         解析后的 dict/list，或 None（无有效 JSON）。
     """
     import json as _json
+    import re as _re
     if expect == "object":
         prefixes = ("{",)
     elif expect == "array":
@@ -68,6 +74,15 @@ def _extract_json_from_output(output: str, expect: str = "any") -> Optional[Any]
             try:
                 return _json.loads(line)
             except _json.JSONDecodeError:
+                # 严格解析失败：尝试移除未转义控制字符后重试。
+                # R jsonlite 在文档元数据含 U+0000-U+001F 时偶尔不转义，
+                # 这些字符在 JSON 结构外非法、在结构字符集里不存在，移除安全。
+                cleaned = _re.sub(r"[\x00-\x1f]", "", line)
+                if cleaned != line:
+                    try:
+                        return _json.loads(cleaned)
+                    except _json.JSONDecodeError:
+                        pass
                 continue
     return None
 

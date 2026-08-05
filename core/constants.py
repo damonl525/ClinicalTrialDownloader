@@ -234,6 +234,13 @@ FDA_PDFFILES_MAP = {
 R_ERROR_TRANSLATIONS = [
     # (pattern, translated_message)  — 顺序即优先级，_translate_r_error 首条命中即返回
     (r"V8 engine not found", "V8 引擎未安装。请在 R 中执行: install.packages('V8')"),
+    # ctrdata 上游 bug：CTGOV2 某些试验的 API 响应含未转义控制字符（U+0000-U+001F），
+    # R jsonlite::fromJSON 严格解析失败。无法在 Python 层修复（错误在 R 解析 API 响应时）。
+    # 给用户明确诊断，避免误以为是网络/工具问题。
+    (r"control characters from U\+0000 through U\+001F must be escaped",
+     "ctrdata 上游 bug：CTGOV2 API 响应含未转义控制字符，R jsonlite 解析失败。"
+     "该试验数据本身的问题（非网络/工具故障），目前无法自动修复。"
+     "建议：① 跳过该试验 ② 等 ctrdata/jsonlite 更新 ③ 上报 upstream"),
     # P3: 网络层诊断（DNS/SNI/代理）——放在笼统的"cannot open connection"之前，
     # 覆盖报告问题 3/6：使用者把 SNI 封锁/DNS IPv6/无代理 env 误判为"限流"空等
     (r"could not resolve host|name or service not known",
