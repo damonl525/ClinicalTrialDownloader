@@ -10,7 +10,7 @@ result <- tryCatch({
             forcetoupdate = {{ force }},
             con = con, verbose = FALSE
         )
-    }}))
+    }))
 }, error = function(e) {
     err_msg <<- as.character(e$message)
     NULL

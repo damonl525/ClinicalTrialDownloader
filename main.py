@@ -56,6 +56,17 @@ def setup_r_environment():
         print("Warning: R installation not found")
 
     os.environ["LANG"] = "en_US.UTF-8"
+    # 修复 Windows 上 LC_CTYPE 导致的 R/jqr bug（rfhb/ctrdata#61）。
+    # Windows R 默认 LC_CTYPE=C（ASCII），或系统设了无效的 C.UTF-8，
+    # 导致 jqr/libjq 解析 CTGOV2 多行 JSON 时误判控制字符、R 模板括号报错。
+    # 覆盖为 .UTF-8（Windows R 解析为系统默认语言的 UTF-8 locale）。
+    # macOS/Linux 用户通常已有正确 locale，setdefault 不覆盖。
+    if sys.platform == "win32":
+        current = os.environ.get("LC_CTYPE", "")
+        if current in ("", "C", "C.UTF-8"):
+            os.environ["LC_CTYPE"] = ".UTF-8"
+    else:
+        os.environ.setdefault("LC_CTYPE", ".UTF-8")
 
 
 def run_pyside6_ui():

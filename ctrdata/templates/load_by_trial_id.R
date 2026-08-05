@@ -8,7 +8,7 @@ result <- tryCatch({
             queryterm = "{{ safe_id }}",
             con = con{{ euctr_r }}, verbose = FALSE
         )
-    }}))
+    }))
 }, error = function(e) {
     cat(sprintf("ERROR\t%s\n", as.character(e$message)))
     list(n = 0L, success = character(0), failed = character(0))
