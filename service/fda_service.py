@@ -32,7 +32,17 @@ class FdaSearchService:
     def __init__(self, api_key: str = None):
         self.api_key = api_key
         self._session = requests.Session()
-        self._session.headers.update({"Accept": "application/json"})
+        self._session.headers.update({
+            # Accept 用 */* 而非 application/json：session 同时用于 API 搜索和 PDF 下载，
+            # accessdata.fda.gov 的 PDF 端点对 Accept: application/json 返回 406 Not Acceptable。
+            # API 搜索调用时单独传 headers={"Accept": "application/json"} 覆盖。
+            "Accept": "*/*",
+            # accessdata.fda.gov 的 PDF 下载需要浏览器 UA，否则 curl/默认 UA 会被 302/拒绝。
+            # 客户实测：requests 带 Mozilla UA 能直接下到 PDF（QWebEngine headless 反而不行）。
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/120.0.0.0 Safari/537.36",
+        })
         self._min_interval = FDA_API_RATE_LIMIT if not api_key else 0.06
         self._last_call_time = 0.0
         self._cancel_flag = False
@@ -154,7 +164,7 @@ class FdaSearchService:
         self._rate_limit()
 
         try:
-            resp = self._session.get(url, timeout=30)
+            resp = self._session.get(url, timeout=30, headers={"Accept": "application/json"})
             if resp.status_code == 404:
                 return {"rows": [], "total": 0}
             resp.raise_for_status()

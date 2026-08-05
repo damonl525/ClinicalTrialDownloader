@@ -99,58 +99,60 @@ def cmd_fda_pdf(args: dict) -> dict:
     toc_rows = [r for r in applications if str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
 
     def factory(loop, state):
-        from service.fda_pdf_downloader import FdaPdfDownloader
+        from service.fda_service import FdaSearchService
 
         def _do_download(docs_to_download):
-            """实际下载阶段。"""
+            """实际下载阶段——用 requests（带浏览器 UA）下载，绕过 headless QWebEngine 下载限制。
+
+            客户实测发现：QWebEngine headless 下 accessdata 的 PDF 端点 loadFinished ok=False，
+            downloadRequested 不触发；但 Python requests 带 Mozilla UA 能直接下载。
+            故 TOC 解析用 QWebEngine（已验证可行），PDF 下载用 requests。
+            """
             if not docs_to_download:
                 state["result"] = {
                     "ok": True, "success": [], "failed": [], "skipped": [],
                     "total_input": len(applications),
                     "toc_rows": len(toc_rows), "toc_expanded_to": 0,
                     "direct_pdfs": len(direct_docs), "downloaded": 0,
+                    "download_method": "requests",
                 }
                 loop.quit()
                 return
 
-            downloader = FdaPdfDownloader()
-
-            def on_complete(result_dict):
-                state["result"] = {
-                    "ok": True,
-                    "success": result_dict.get("success", []),
-                    "failed": result_dict.get("failed", []),
-                    "skipped": result_dict.get("skipped", []),
-                    "total_input": len(applications),
-                    "toc_rows": len(toc_rows),
-                    "toc_expanded_to": len(docs_to_download) - len(direct_docs),
-                    "direct_pdfs": len(direct_docs),
-                    "downloaded": len(docs_to_download),
-                }
-                loop.quit()
-
-            downloader.download_complete.connect(on_complete)
-            downloader.download(docs_to_download, save_dir)
+            # requests 下载（同步，在事件循环外执行后 quit）
+            svc = FdaSearchService()
+            result_dict = svc.download_docs(docs_to_download, save_dir)
+            state["result"] = {
+                "ok": True,
+                "success": result_dict.get("success", []),
+                "failed": result_dict.get("failed", []),
+                "skipped": result_dict.get("skipped", []),
+                "total_input": len(applications),
+                "toc_rows": len(toc_rows),
+                "toc_expanded_to": len(docs_to_download) - len(direct_docs),
+                "direct_pdfs": len(direct_docs),
+                "downloaded": len(docs_to_download),
+                "download_method": "requests",
+            }
+            loop.quit()
 
         if not toc_rows:
-            # 无 TOC，直接下载
+            # 无 TOC，直接下载（仍然走 requests）
             _do_download(direct_docs)
             return
 
-        # 有 TOC：先解析 TOC 页面拿到 pdfFiles，再 expand_from_pdffiles 展开为直接 PDF
+        # 有 TOC：先解析 TOC 页面拿到 pdfFiles（QWebEngine），再 expand，最后 requests 下载
         from service.fda_toc_parser import FdaTocParser
-        from service.fda_service import FdaSearchService
 
         toc_urls = [r["doc_url"] for r in toc_rows if r.get("doc_url")]
         parser = FdaTocParser()
 
         def on_parse_complete(toc_data):
-            """TOC 解析完成 → 展开 → 下载。"""
+            """TOC 解析完成 → 展开 → requests 下载。"""
             try:
                 svc = FdaSearchService()
                 all_rows = direct_docs + toc_rows
                 expanded = svc.expand_from_pdffiles(all_rows, toc_data)
-                # expand 后全为直接 PDF URL（TOC 已展开或回退构造）
                 _do_download(expanded)
             except Exception as e:
                 state["result"] = {"ok": False, "error": f"TOC 展开失败: {e}"}
