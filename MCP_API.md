@@ -49,7 +49,7 @@ pip install mcp>=2.0     # MCP SDK（仅 MCP server 用，GUI 不依赖）
 
 R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_environment）。数据/文档下载工具需 R + ctrdata 包；FDA 搜索/CDE 不需要 R。
 
-## 工具清单（15 个）
+## 工具清单（17 个）
 
 ### 数据库（3）
 
@@ -66,11 +66,12 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 | `generate_search_urls` | 生成各注册中心查询 URL | `condition`、`intervention`、`phase`（如 "phase 3"）、`start_after/before`（YYYY-MM-DD）、`countries` |
 | `preview_count` | 预览试验数量（不下，仅计数） | `urls`（来自 generate_search_urls） |
 
-### 下载（3）
+### 下载（4）
 
 | 工具 | 说明 | 关键参数 |
 |------|------|---------|
 | `download_to_db` | 下载数据到库（不含文档） | `url`（可多行）、`timeout`（默认 600） |
+| `download_to_db_split` | 自动分批下载 CTGOV2（绕过 >10000 上限） | 查询条件 + `start_after/before` 日期范围 + `max_per_batch`（默认 9000） |
 | `download_by_trial_id` | 按试验 ID 下载单条（绕过上游 bug） | `trial_id`（如 NCT00001471） |
 | `incremental_update` | 增量更新 | `query_index`、`force_update` |
 
@@ -89,12 +90,13 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 
 按注册中心自动路由，支持断点续传，落盘后自动校验 PDF（删 HTML/SPA 壳）。
 
-### FDA 审评文档（2，无需数据库/R）
+### FDA 审评文档（3，无需数据库/R）
 
 | 工具 | 说明 | 关键参数 |
 |------|------|---------|
 | `fda_search` | 搜索 openFDA | `drug_name`、`manufacturer`、`start_date/end_date` |
-| `fda_download_docs` | 下载审评 PDF（走 qt_helper） | `applications`（来自 fda_search）、`save_dir` |
+| `fda_expand_toc` | 展开 TOC 页面为直接 PDF URL 列表（走 qt_helper） | `applications`（来自 fda_search） |
+| `fda_download_docs` | 下载审评 PDF（自动展开 TOC，走 qt_helper） | `applications`、`save_dir` |
 
 ### CDE 上市药品（2，无需数据库/R）
 
@@ -124,6 +126,8 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 ```
 1. fda_search(drug_name="pembrolizumab")                           → applications
 2. fda_download_docs(applications=applications, save_dir="fda/")   → PDF
+   （fda_download_docs 内部自动展开 .html/.cfm 的 TOC 页面为直接 PDF URL；
+    如需先预览展开结果，可调 fda_expand_toc）
 ```
 
 ### CDE 上市药品
@@ -135,7 +139,7 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 
 ## 已知限制
 
-- **CTGOV2 >10000 上限**：单次查询超 1 万试验返回 n:0 假成功。按年/季分批，每批 <10000。
+- **CTGOV2 >10000 上限**：单次查询超 1 万试验返回 n:0 假成功。用 `download_to_db_split` 自动按年分批（需提供 start_after/start_before 日期范围）。
 - **ctrdata rows_update 上游 bug**：某些批次整批失败。用 `download_by_trial_id` 逐条补救，或分小批重试。
 - **CDN/SNI 封锁**：clinicaltrials.gov 域名可能被 SNI 层封锁。在 GUI Settings 配代理端口，或终端 `set HTTPS_PROXY` 后启动。
 - **FDA TOC 页面**：`fda_download_docs` 当前不展开 .html/.cfm 的 TOC URL（需 FdaTocParser，暂不支持），会直接报错提示。直接 PDF URL 可正常下载。

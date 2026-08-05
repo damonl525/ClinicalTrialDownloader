@@ -281,6 +281,159 @@ def download_to_db(
 
 
 @mcp.tool()
+def download_to_db_split(
+    condition: str = "",
+    intervention: str = "",
+    search_phrase: str = "",
+    phase: str = "",
+    recruitment: str = "",
+    start_after: str = "",
+    start_before: str = "",
+    completed_after: str = "",
+    completed_before: str = "",
+    population: str = "",
+    countries: str = "",
+    only_med_interv_trials: bool = True,
+    only_with_results: bool = False,
+    max_per_batch: int = 9000,
+    timeout: int = 600,
+) -> dict:
+    """自动分批下载 CTGOV2 数据（绕过 >10000 上限）。
+
+    CTGOV2 单次查询 >10000 试验会被拒（返回 n:0 假成功）。此工具先预览总数，
+    若超 max_per_batch 则按年份拆分为多次下载，逐年下载直到全部完成。
+
+    仅对 CTGOV2 生效（其他注册中心无此限制，直接下载）。日期范围必须提供
+    start_after/start_before，否则无法按年拆分——若无日期范围且超限，
+    返回错误提示加日期范围。
+
+    Args:
+        与 generate_search_urls 相同的查询参数。
+        max_per_batch: 每批最大试验数（默认 9000，留余量 < 10000 上限）。
+        timeout: 每批下载超时秒数。
+
+    Returns:
+        {ok, total_n: 累计记录数, batches: 批次数, batch_results: [...], warnings}
+    """
+    import datetime as _dt
+    bridge = _get_bridge()
+
+    # 生成 CTGOV2 URL 并预览
+    urls = bridge.generate_queries(
+        condition=condition, intervention=intervention, search_phrase=search_phrase,
+        phase=phase, recruitment=recruitment,
+        start_after=start_after, start_before=start_before,
+        completed_after=completed_after, completed_before=completed_before,
+        population=population, countries=countries,
+        only_med_interv_trials=only_med_interv_trials,
+        only_with_results=only_with_results,
+    )
+    ctgov_url = urls.get("CTGOV2")
+    if not ctgov_url:
+        return {"ok": False, "error": "无 CTGOV2 URL（查询条件可能不支持），无法分批"}
+
+    counts = bridge.count_trials({"CTGOV2": ctgov_url})
+    total_count = counts.get("CTGOV2", 0)
+
+    # 未超限：直接下载
+    if total_count <= max_per_batch:
+        result = bridge.load_into_db(ctgov_url, timeout=timeout)
+        result["total_n"] = result.get("n", 0)
+        return {**result, "total_count": total_count, "batches": 1, "split": False}
+
+    # 超限：按年拆分
+    if not start_after or not start_before:
+        return {
+            "ok": False,
+            "error": f"CTGOV2 查询结果 {total_count} 条超过 {max_per_batch} 上限，"
+                     "需提供 start_after/start_before 日期范围才能按年拆分。",
+            "total_count": total_count,
+        }
+
+    def _parse_date(s):
+        try:
+            return _dt.datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    d_start = _parse_date(start_after)
+    d_end = _parse_date(start_before)
+    if not d_start or not d_end:
+        return {"ok": False, "error": f"日期格式无效: start_after={start_after}, start_before={start_before}"}
+
+    # 生成年份分段列表
+    year_ranges = []
+    y = d_start.year
+    while y <= d_end.year:
+        seg_start = max(d_start, _dt.date(y, 1, 1))
+        seg_end = min(d_end, _dt.date(y, 12, 31))
+        year_ranges.append((seg_start, seg_end))
+        y += 1
+
+    batch_results = []
+    total_n = 0
+    total_success = []
+    total_failed = {}
+    warnings_list = []
+    skipped_batches = []
+
+    for seg_start, seg_end in year_ranges:
+        # 生成分段 URL
+        seg_urls = bridge.generate_queries(
+            condition=condition, intervention=intervention, search_phrase=search_phrase,
+            phase=phase, recruitment=recruitment,
+            start_after=seg_start.isoformat(), start_before=seg_end.isoformat(),
+            completed_after=completed_after, completed_before=completed_before,
+            population=population, countries=countries,
+            only_med_interv_trials=only_med_interv_trials,
+            only_with_results=only_with_results,
+        )
+        seg_url = seg_urls.get("CTGOV2")
+        if not seg_url:
+            continue
+
+        # 预览分段数量
+        seg_count = bridge.count_trials({"CTGOV2": seg_url}).get("CTGOV2", 0)
+        if seg_count == 0:
+            skipped_batches.append(f"{seg_start.year}: 0 条")
+            continue
+
+        # 若某年仍超限，提示需进一步拆分（季度）
+        if seg_count > max_per_batch:
+            msg = f"{seg_start.year} 年 {seg_count} 条仍超限，建议按季度拆分（该批跳过）"
+            warnings_list.append(msg)
+            skipped_batches.append(f"{seg_start.year}: {seg_count} 条超限")
+            continue
+
+        # 下载该分段
+        seg_result = bridge.load_into_db(seg_url, timeout=timeout)
+        seg_n = seg_result.get("n", 0)
+        total_n += seg_n
+        if seg_result.get("success"):
+            total_success.extend(seg_result["success"])
+        if seg_result.get("failed"):
+            total_failed.update(seg_result["failed"])
+        if seg_result.get("warnings"):
+            warnings_list.extend(seg_result["warnings"])
+        batch_results.append({
+            "year": seg_start.year, "count": seg_count, "downloaded_n": seg_n,
+        })
+
+    return {
+        "ok": True,
+        "total_n": total_n,
+        "total_count": total_count,
+        "batches": len(batch_results),
+        "batch_results": batch_results,
+        "skipped_batches": skipped_batches,
+        "success": total_success,
+        "failed": total_failed,
+        "warnings": warnings_list,
+        "split": True,
+    }
+
+
+@mcp.tool()
 def download_by_trial_id(trial_id: str, euctrresults: bool = False) -> dict:
     """通过试验 ID 直接下载单条数据（绕过批量下载的 ctrdata 上游 bug）。
 
@@ -456,11 +609,36 @@ def fda_download_docs(applications: list, save_dir: str) -> dict:
     需要 QWebEngine（PySide6），由 qt_helper.py 在独立进程跑。
     限速下载（随机 8-15s 延迟，连续失败 60s 冷却）。
 
+    支持自动展开 TOC 页面：applications 里的 .html/.cfm 记录会先用
+    FdaTocParser 解析（提取 pdfFiles 确认哪些 PDF 真实存在），
+    再 expand 为直接 PDF URL 下载。也可先用 fda_expand_toc 单独展开查看。
+
     Args:
-        applications: 申请记录列表（来自 fda_search 的 applications 字段）。
+        applications: 申请记录列表（来自 fda_search 的 applications 字段，
+                      可含直接 PDF URL 和 TOC 页面 URL）。
         save_dir: PDF 保存目录。
     """
     return _qt_helper("fda_pdf", {"applications": applications, "save_dir": save_dir})
+
+
+@mcp.tool()
+def fda_expand_toc(applications: list) -> dict:
+    """展开 FDA TOC 页面 URL 为直接 PDF URL 列表（通过 Qt 子进程）。
+
+    fda_search 返回的 applications 含 TOC 页面（.html/.cfm，一个申请包多个 PDF）。
+    此工具用 QWebEngine 加载 TOC 页面提取 pdfFiles JS 对象，确认哪些 PDF 真实
+    存在，构造直接下载 URL。
+
+    用途：① 下载前预览可下载的 PDF 列表 ② 分步调试 TOC 解析。
+    也可跳过此步直接调 fda_download_docs（它内部会自动展开）。
+
+    Args:
+        applications: 申请记录列表（来自 fda_search）。
+
+    Returns:
+        {ok, total, applications: [展开后的直接 PDF 记录列表]}
+    """
+    return _qt_helper("fda_toc", {"applications": applications})
 
 
 # ── CDE 上市药品审评报告（独立，无需数据库/R）──

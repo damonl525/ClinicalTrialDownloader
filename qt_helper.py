@@ -10,7 +10,8 @@ Qt helper for headless MCP tools.
     python qt_helper.py <command>   # 参数 JSON 从 stdin 读入
 
 支持的 command：
-    fda_pdf    下载 FDA 审评 PDF（applications 列表 → FdaPdfDownloader）
+    fda_toc    解析 FDA TOC 页面，展开为直接 PDF URL 列表（FdaTocParser）
+    fda_pdf    下载 FDA 审评 PDF（含 TOC 自动展开 → FdaPdfDownloader）
     cde_list   爬取 CDE 上市药品列表（CdeListScraper）
     cde_pdf    下载 CDE 审评 PDF（drugs 列表 → CdePdfDownloader）
 
@@ -93,31 +94,135 @@ def cmd_fda_pdf(args: dict) -> dict:
 
     os.makedirs(save_dir, exist_ok=True)
 
-    # 预过滤 TOC 页面 URL（.html/.cfm），这些需要 FdaTocParser 展开而非直接下载
-    docs = [r for r in applications if not str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
-    toc_count = len(applications) - len(docs)
-    if not docs:
-        return {"ok": False, "error": f"所有 {len(applications)} 条记录均为 TOC 页面（.html/.cfm），需先展开。qt_helper 当前不支持 TOC 展开。"}
+    # 分离 TOC 页面 URL（.html/.cfm）与直接 PDF URL
+    direct_docs = [r for r in applications if not str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
+    toc_rows = [r for r in applications if str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
 
     def factory(loop, state):
         from service.fda_pdf_downloader import FdaPdfDownloader
 
-        downloader = FdaPdfDownloader()
+        def _do_download(docs_to_download):
+            """实际下载阶段。"""
+            if not docs_to_download:
+                state["result"] = {
+                    "ok": True, "success": [], "failed": [], "skipped": [],
+                    "total_input": len(applications),
+                    "toc_rows": len(toc_rows), "toc_expanded_to": 0,
+                    "direct_pdfs": len(direct_docs), "downloaded": 0,
+                }
+                loop.quit()
+                return
 
-        def on_complete(result_dict):
-            state["result"] = {
-                "ok": True,
-                "success": result_dict.get("success", []),
-                "failed": result_dict.get("failed", []),
-                "skipped": result_dict.get("skipped", []),
-                "total_input": len(applications),
-                "toc_filtered": toc_count,
-                "downloaded": len(docs),
-            }
+            downloader = FdaPdfDownloader()
+
+            def on_complete(result_dict):
+                state["result"] = {
+                    "ok": True,
+                    "success": result_dict.get("success", []),
+                    "failed": result_dict.get("failed", []),
+                    "skipped": result_dict.get("skipped", []),
+                    "total_input": len(applications),
+                    "toc_rows": len(toc_rows),
+                    "toc_expanded_to": len(docs_to_download) - len(direct_docs),
+                    "direct_pdfs": len(direct_docs),
+                    "downloaded": len(docs_to_download),
+                }
+                loop.quit()
+
+            downloader.download_complete.connect(on_complete)
+            downloader.download(docs_to_download, save_dir)
+
+        if not toc_rows:
+            # 无 TOC，直接下载
+            _do_download(direct_docs)
+            return
+
+        # 有 TOC：先解析 TOC 页面拿到 pdfFiles，再 expand_from_pdffiles 展开为直接 PDF
+        from service.fda_toc_parser import FdaTocParser
+        from service.fda_service import FdaSearchService
+
+        toc_urls = [r["doc_url"] for r in toc_rows if r.get("doc_url")]
+        parser = FdaTocParser()
+
+        def on_parse_complete(toc_data):
+            """TOC 解析完成 → 展开 → 下载。"""
+            try:
+                svc = FdaSearchService()
+                all_rows = direct_docs + toc_rows
+                expanded = svc.expand_from_pdffiles(all_rows, toc_data)
+                # expand 后全为直接 PDF URL（TOC 已展开或回退构造）
+                _do_download(expanded)
+            except Exception as e:
+                state["result"] = {"ok": False, "error": f"TOC 展开失败: {e}"}
+                loop.quit()
+
+        def on_parse_error(msg):
+            state["result"] = {"ok": False, "error": f"FdaTocParser 解析失败: {msg}"}
             loop.quit()
 
-        downloader.download_complete.connect(on_complete)
-        downloader.download(docs, save_dir)
+        parser.parse_complete.connect(on_parse_complete)
+        parser.parse_error.connect(on_parse_error)
+        parser.parse(toc_urls)
+
+    return _run_qt_app(factory)
+
+
+# ============================================================
+# fda_toc — 解析 FDA TOC 页面，展开为直接 PDF URL 列表
+# ============================================================
+
+def cmd_fda_toc(args: dict) -> dict:
+    """解析 FDA TOC 页面（.html/.cfm），返回展开后的直接 PDF URL 列表。
+
+    用于 fda_search → fda_download_docs 之间：fda_search 返回的 applications
+    含 TOC 页面 URL（一个申请包多个 PDF），此命令用 QWebEngine 加载 TOC 页面
+    提取 pdfFiles JS 对象，确认哪些 PDF 真实存在，构造直接下载 URL。
+
+    args:
+        applications: 申请记录列表（来自 fda_search，含 doc_url 等）
+    Returns:
+        {ok, total, applications: [展开后的直接 PDF 记录列表]}
+    """
+    applications = args.get("applications", [])
+    if not applications:
+        return {"ok": False, "error": "applications 列表为空"}
+
+    toc_rows = [r for r in applications if str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
+    direct_docs = [r for r in applications if not str(r.get("doc_url", "")).lower().endswith((".html", ".cfm"))]
+
+    if not toc_rows:
+        return {"ok": True, "total": len(direct_docs), "applications": direct_docs,
+                "note": "无 TOC 页面，原样返回直接 PDF 记录"}
+
+    def factory(loop, state):
+        from service.fda_toc_parser import FdaTocParser
+        from service.fda_service import FdaSearchService
+
+        parser = FdaTocParser()
+        toc_urls = [r["doc_url"] for r in toc_rows if r.get("doc_url")]
+
+        def on_parse_complete(toc_data):
+            try:
+                svc = FdaSearchService()
+                expanded = svc.expand_from_pdffiles(direct_docs + toc_rows, toc_data)
+                state["result"] = {
+                    "ok": True,
+                    "total": len(expanded),
+                    "applications": expanded,
+                    "toc_parsed": len(toc_urls),
+                    "toc_data_keys": [k for k, v in toc_data.items() if v is not None],
+                }
+            except Exception as e:
+                state["result"] = {"ok": False, "error": f"TOC 展开失败: {e}"}
+            loop.quit()
+
+        def on_parse_error(msg):
+            state["result"] = {"ok": False, "error": f"FdaTocParser 解析失败: {msg}"}
+            loop.quit()
+
+        parser.parse_complete.connect(on_parse_complete)
+        parser.parse_error.connect(on_parse_error)
+        parser.parse(toc_urls)
 
     return _run_qt_app(factory)
 
@@ -259,6 +364,7 @@ def cmd_cde_pdf(args: dict) -> dict:
 # ============================================================
 
 COMMANDS = {
+    "fda_toc": cmd_fda_toc,
     "fda_pdf": cmd_fda_pdf,
     "cde_list": cmd_cde_list,
     "cde_pdf": cmd_cde_pdf,
