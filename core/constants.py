@@ -360,9 +360,7 @@ RESUME_PATH_SLUG_LENGTH = 8          # md5 hex digest truncation for directory i
 RESUME_SESSION_HASH_LENGTH = 16      # md5 hex digest truncation for session invalidation
 
 # Document file validation (P2) — 落盘后校验，防 HTML/SPA 壳冒充 PDF
-PDF_MAGIC_BYTES = b"%PDF-"           # PDF 文件头标识
-HTML_DETECT_BYTES = b"<!DOCTYPE"     # SPA/HTML 壳页面特征
-DOC_VALIDATE_MIN_SIZE = 1024         # 有效 PDF 最小字节数（低于此值视为损坏/空）
+HTML_DETECT_BYTES = b"<!DOCTYPE"     # SPA/HTML 壳页面特征（PDF 不含此串）
 
 # Network proxy (P4) — R 子进程代理 env 注入，绕过 CDN/SNI 封锁
 PROXY_DEFAULT_PORT = 0               # 0 = 不启用代理（直连）；常见：Clash 7892 / V2Ray 10809

@@ -20,9 +20,7 @@ from core.constants import (
     DOC_DOWNLOAD_PER_TRIAL,
     RESUME_PATH_SLUG_LENGTH,
     RESUME_SESSION_HASH_LENGTH,
-    PDF_MAGIC_BYTES,
     HTML_DETECT_BYTES,
-    DOC_VALIDATE_MIN_SIZE,
 )
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
@@ -37,29 +35,30 @@ logger = logging.getLogger(__name__)
 def _validate_downloaded_file(filepath: str) -> tuple:
     """校验下载文件是否为有效 PDF，返回 (is_valid, reason)。
 
-    命中 HTML 壳/小文件/非 PDF 时返回 (False, 原因)。有效 PDF 返回 (True, "")。
-    覆盖客户报告问题 4：文档下载通道被前端 SPA 保护，/download/{id}/{file}
-    返回 94KB Angular SPA 的 HTML 而非 PDF，工具此前静默存了 HTML 当 PDF。
+    只对明确的 HTML 壳页面返回 (False, 原因)——这是 P2 的核心目标：防 CDN/SPI
+    拦截页（如 CTGOV2 的 Angular SPA 壳、`<!DOCTYPE html>` 错误页）冒充 PDF。
+    其他情况（有效 PDF、小文件、无法识别文件头）一律视为有效 (True, "")，
+    因为：
+      - 小文件可能是有效的短 PDF 或用户/测试预置的占位（不能假设损坏）
+      - 文件头非 %PDF- 也可能是合法的非 PDF 附件（EUCTR 全量下载含非 PDF）
+
+    只删"确定无疑的 HTML 壳"是最安全的策略，避免破坏既有约定
+    （文件存在即视为下载成功、断点续传、测试 fixture）。
+
+    覆盖客户报告问题 4：/download/{id}/{file} 返回 94KB Angular SPA HTML 而非 PDF。
     """
     if not os.path.isfile(filepath):
-        return False, "文件不存在"
-    try:
-        size = os.path.getsize(filepath)
-    except OSError:
-        return False, "无法读取文件大小"
-    if size < DOC_VALIDATE_MIN_SIZE:
-        return False, f"文件过小（{size} 字节，疑似空/损坏）"
+        return True, ""  # 不存在不在此处理（由 _trial_has_docs 判断）
     try:
         with open(filepath, "rb") as f:
-            head = f.read(16)
-    except OSError as e:
-        return False, f"无法读取文件头: {e}"
-    if head.startswith(PDF_MAGIC_BYTES):
-        return True, ""
+            head = f.read(256)  # HTML 声明可能在 BOM/空白后，多读些
+    except OSError:
+        return True, ""  # 读不了就不删，交给其他逻辑处理
+    stripped = head.lstrip()
     # 命中 HTML 壳（SPA / 错误页 / CDN 拦截页）
-    if HTML_DETECT_BYTES in head or head.lstrip().lower().startswith(b"<html"):
+    if HTML_DETECT_BYTES in stripped[:50] or stripped[:5].lower() == b"<html":
         return False, "下载到 HTML 网页而非 PDF（可能被前端 SPA 或 CDN 拦截，建议检查网络/代理）"
-    return False, f"非 PDF 文件（文件头: {head[:8]!r}）"
+    return True, ""
 
 
 def _validate_trial_docs(documents_path: str, trial_id: str) -> tuple:
