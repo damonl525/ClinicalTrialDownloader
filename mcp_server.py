@@ -456,11 +456,36 @@ def fda_download_docs(applications: list, save_dir: str) -> dict:
     需要 QWebEngine（PySide6），由 qt_helper.py 在独立进程跑。
     限速下载（随机 8-15s 延迟，连续失败 60s 冷却）。
 
+    支持自动展开 TOC 页面：applications 里的 .html/.cfm 记录会先用
+    FdaTocParser 解析（提取 pdfFiles 确认哪些 PDF 真实存在），
+    再 expand 为直接 PDF URL 下载。也可先用 fda_expand_toc 单独展开查看。
+
     Args:
-        applications: 申请记录列表（来自 fda_search 的 applications 字段）。
+        applications: 申请记录列表（来自 fda_search 的 applications 字段，
+                      可含直接 PDF URL 和 TOC 页面 URL）。
         save_dir: PDF 保存目录。
     """
     return _qt_helper("fda_pdf", {"applications": applications, "save_dir": save_dir})
+
+
+@mcp.tool()
+def fda_expand_toc(applications: list) -> dict:
+    """展开 FDA TOC 页面 URL 为直接 PDF URL 列表（通过 Qt 子进程）。
+
+    fda_search 返回的 applications 含 TOC 页面（.html/.cfm，一个申请包多个 PDF）。
+    此工具用 QWebEngine 加载 TOC 页面提取 pdfFiles JS 对象，确认哪些 PDF 真实
+    存在，构造直接下载 URL。
+
+    用途：① 下载前预览可下载的 PDF 列表 ② 分步调试 TOC 解析。
+    也可跳过此步直接调 fda_download_docs（它内部会自动展开）。
+
+    Args:
+        applications: 申请记录列表（来自 fda_search）。
+
+    Returns:
+        {ok, total, applications: [展开后的直接 PDF 记录列表]}
+    """
+    return _qt_helper("fda_toc", {"applications": applications})
 
 
 # ── CDE 上市药品审评报告（独立，无需数据库/R）──

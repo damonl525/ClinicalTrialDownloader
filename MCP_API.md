@@ -89,12 +89,13 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 
 按注册中心自动路由，支持断点续传，落盘后自动校验 PDF（删 HTML/SPA 壳）。
 
-### FDA 审评文档（2，无需数据库/R）
+### FDA 审评文档（3，无需数据库/R）
 
 | 工具 | 说明 | 关键参数 |
 |------|------|---------|
 | `fda_search` | 搜索 openFDA | `drug_name`、`manufacturer`、`start_date/end_date` |
-| `fda_download_docs` | 下载审评 PDF（走 qt_helper） | `applications`（来自 fda_search）、`save_dir` |
+| `fda_expand_toc` | 展开 TOC 页面为直接 PDF URL 列表（走 qt_helper） | `applications`（来自 fda_search） |
+| `fda_download_docs` | 下载审评 PDF（自动展开 TOC，走 qt_helper） | `applications`、`save_dir` |
 
 ### CDE 上市药品（2，无需数据库/R）
 
@@ -124,6 +125,8 @@ R 环境：MCP server 启动时会自动检测 R_HOME（复用 main.setup_r_envi
 ```
 1. fda_search(drug_name="pembrolizumab")                           → applications
 2. fda_download_docs(applications=applications, save_dir="fda/")   → PDF
+   （fda_download_docs 内部自动展开 .html/.cfm 的 TOC 页面为直接 PDF URL；
+    如需先预览展开结果，可调 fda_expand_toc）
 ```
 
 ### CDE 上市药品
