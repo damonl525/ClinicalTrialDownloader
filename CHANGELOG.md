@@ -4,6 +4,29 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [1.6.0] - 2026-08-05
+
+### 新功能
+- **MCP Server**（AI 无 GUI 调用接口）：新增 `mcp_server.py` + `qt_helper.py`，通过 Model Context Protocol 暴露 17 个工具给 AI agent（ZCode/Claude Desktop/Cursor 等）。纯 Python 功能（搜索/下载/提取/文档）直接调 service/bridge；Qt 依赖功能（FDA PDF/CDE）通过 subprocess 隔离进程跑。含 `.mcp.json` 配置 + `MCP_API.md` 文档。工具清单：connect_db / generate_search_urls / download_to_db / **download_to_db_split**（CTGOV2 >10000 自动按年分批）/ extract_dataframe / download_documents / **fda_expand_toc**（FDA TOC 页面展开）/ fda_search / fda_download_docs / cde_list / cde_download_docs 等
+- **FDA TOC 自动展开**（T2）：`fda_download_docs` 含 `.html/.cfm` 的 TOC 页面时，自动用 FdaTocParser 提取 pdfFiles 确认哪些 PDF 真实存在，展开为直接下载 URL。实测 1 个 TOC → 7 个精确 PDF
+- **CTGOV2 自动分批**（T3）：新增 `download_to_db_split` 工具，查询结果 >9000 时自动按年份拆分多次下载，根治 CTGOV2 单次 >10000 被拒的痛点。某年仍超限则提示按季度拆分
+- **代理配置**（P4）：Settings 新增「网络代理」组，配置本地代理端口后注入 `http_proxy`/`https_proxy` env 给 R 子进程，绕过 clinicaltrials.gov 的 CDN/SNI 封锁。用 `setdefault` 尊重已有系统 env
+- **pytest CI**（T1）：新增 `pytest.ini` + `tests/conftest.py` + GitHub Actions（ubuntu + windows 双矩阵）。150 passed。每次 push/PR 自动跑测试
+- **run.bat 启动脚本**：双击自动用 `.venv` python 启动 GUI，避免误用系统 python（无 GUI 依赖）
+
+### 改进
+- **n:0 假成功告警**（P1）：下载结果对话框在 `n==0` 且无 failed 时升级为 Warning，提示可能是 CTGOV2 >10000 上限 / ctrdata 上游 bug / 无匹配，建议分批重试
+- **R 层警告透出**（P5）：结果对话框新增「R 层警告」区，显示 R 输出的 `ERROR\t` 行（此前被 `_on_complete` 丢弃）
+- **网络错误诊断**（P3）：`R_ERROR_TRANSLATIONS` 追加 3 条网络层 pattern（DNS 解析失败 / SSL-SNI / 连接失败），给具体诊断指引而非泛泛提示。覆盖客户报告的 SNI 封锁/DNS IPv6/无代理 env 误判为限流场景
+- **文档 PDF 校验**（P2）：文档下载落盘后检查文件头，命中 `<!DOCTYPE`/`<html>` 的 HTML 壳（CDN/SPA 拦截页冒充 PDF）自动删除并标记 failed。覆盖客户报告的 94KB Angular SPA 壳冒充 PDF 问题
+
+### 修复
+- **JSON 控制字符处理**：`_extract_json_from_output` 严格解析失败时清洗 U+0000-U+001F 控制字符后重试。诊断并上报上游 bug [rfhb/ctrdata#61](https://github.com/rfhb/ctrdata/issues/61)（jqr 误判结构层 LF 为未转义控制字符）
+- **CI 环境适配**：Linux 加 Qt 系统库（libegl1/libgl1）；R 测试 skipif 加强校验（Rscript 可执行 + jsonlite 可加载，避免 CI 预装残缺 R 导致误跑失败）
+
+### AGENTS.md
+- 新增工作区级 ZCode agent 指令文件，引导后续 agent 理解项目分层、R 集成红线、PySide6/Qt 约束
+
 ## [1.5.3] - 2026-06-24
 
 ### 改进

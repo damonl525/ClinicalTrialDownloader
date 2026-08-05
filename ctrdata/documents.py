@@ -21,6 +21,8 @@ from core.constants import (
     RESUME_PATH_SLUG_LENGTH,
     RESUME_SESSION_HASH_LENGTH,
     HTML_DETECT_BYTES,
+    DOC_DOWNLOAD_MAX_RETRIES,
+    DOC_DOWNLOAD_RETRY_BASE_DELAY,
 )
 from ctrdata import process as _proc
 from ctrdata.process import download_one_trial_doc  # noqa: F401
@@ -103,6 +105,27 @@ def _validate_trial_docs(documents_path: str, trial_id: str) -> tuple:
                 logger.warning("无法删除坏文件 %s: %s", fp, e)
 
     return bad_removed, reasons
+
+
+def _is_retryable_error(error: str) -> bool:
+    """判断文档下载失败是否值得重试（瞬时网络抖动可重试，确定性失败不重试）。
+
+    可重试：404、连接重置、网络中断等瞬时错误。
+    不重试：超时（太耗时）、No documents（确定性空结果）、坏文件已删（内容问题非网络）。
+    """
+    if not error:
+        return False
+    err_lower = str(error).lower()
+    # 超时类——重试成本高，交给断点续传
+    if "timeout" in err_lower or "TIMEOUT" in str(error):
+        return False
+    # 确定性空结果——重试也一样
+    if "no documents" in err_lower or "无文档" in str(error):
+        return False
+    # 坏文件已删——内容问题，非网络
+    if "无效已删" in str(error) or "坏文件" in str(error):
+        return False
+    return True
 
 
 # ============================================================
@@ -444,9 +467,30 @@ def download_documents_for_ids(
         _save_runtime_resume()
 
         try:
-            result = download_one_trial_doc(
-                bridge, tid, documents_path, documents_regexp, per_trial_timeout
-            )
+            # 瞬时网络失败（404/连接重置等）有限重试，指数退避
+            # 超时类、No documents 类不重试（前者太耗时，后者确定性空结果）
+            result = None
+            last_err = None
+            for attempt in range(DOC_DOWNLOAD_MAX_RETRIES + 1):
+                if bridge._cancelled:
+                    break
+                result = download_one_trial_doc(
+                    bridge, tid, documents_path, documents_regexp, per_trial_timeout
+                )
+                if result.get("ok"):
+                    break
+                last_err = result.get("error", "unknown")
+                if not _is_retryable_error(last_err) or attempt >= DOC_DOWNLOAD_MAX_RETRIES:
+                    break
+                # 可重试错误：等待退避后重试
+                import time as _time
+                delay = DOC_DOWNLOAD_RETRY_BASE_DELAY * (2 ** attempt)
+                logger.info("Trial %s 下载失败（%s），%ds 后重试（%d/%d）",
+                            tid, last_err[:80], delay, attempt + 1, DOC_DOWNLOAD_MAX_RETRIES)
+                if callback:
+                    callback(global_i, total_to_process, tid, "retry",
+                             f"第 {attempt+1} 次重试（{delay}s 后），上次错误: {last_err[:60]}")
+                _time.sleep(delay)
             if result.get("ok"):
                 file_skips = _flatten_trial_docs(documents_path, tid)
                 # P2: 校验落盘文件，删坏文件（HTML/SPA 壳冒充 PDF）
@@ -467,7 +511,7 @@ def download_documents_for_ids(
                     if callback:
                         callback(global_i, total_to_process, tid, "skip", runtime_failed[tid])
             else:
-                err = result.get("error", "unknown")
+                err = result.get("error", last_err or "unknown")
                 runtime_failed[tid] = err
                 if callback:
                     callback(global_i, total_to_process, tid, "error", err)
