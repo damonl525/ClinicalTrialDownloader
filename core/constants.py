@@ -12,7 +12,7 @@ import re
 # ================================================================
 APP_NAME = "临床试验数据下载器"
 APP_NAME_EN = "Clinical Trial Data Downloader"
-APP_VERSION = "1.5.3"
+APP_VERSION = "1.6.0"
 
 # ================================================================
 # 数据库
@@ -361,6 +361,10 @@ RESUME_SESSION_HASH_LENGTH = 16      # md5 hex digest truncation for session inv
 
 # Document file validation (P2) — 落盘后校验，防 HTML/SPA 壳冒充 PDF
 HTML_DETECT_BYTES = b"<!DOCTYPE"     # SPA/HTML 壳页面特征（PDF 不含此串）
+
+# Document download retry (瞬时网络抖动重试)
+DOC_DOWNLOAD_MAX_RETRIES = 2         # 瞬时失败（404/连接重置，非超时/非无文档）重试次数
+DOC_DOWNLOAD_RETRY_BASE_DELAY = 3    # 重试基础延迟秒数，指数退避（3s, 6s）
 
 # Network proxy (P4) — R 子进程代理 env 注入，绕过 CDN/SNI 封锁
 PROXY_DEFAULT_PORT = 0               # 0 = 不启用代理（直连）；常见：Clash 7892 / V2Ray 10809
