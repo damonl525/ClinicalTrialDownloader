@@ -69,6 +69,7 @@ version_info.txt
 .claude/
 .omc/
 .sisyphus/
+.zcode/
 
 # Project specific
 test_documents/
